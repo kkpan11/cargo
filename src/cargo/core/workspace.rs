@@ -29,7 +29,7 @@ use crate::util::lints::{
 };
 use crate::util::toml::{read_manifest, InheritableFields};
 use crate::util::{
-    context::CargoResolverConfig, context::CargoResolverPrecedence, context::ConfigRelativePath,
+    context::CargoResolverConfig, context::ConfigRelativePath, context::IncompatibleRustVersions,
     Filesystem, GlobalContext, IntoUrl,
 };
 use cargo_util::paths;
@@ -244,25 +244,6 @@ impl<'gctx> Workspace<'gctx> {
         }
     }
 
-    pub fn new_virtual(
-        root_path: PathBuf,
-        current_manifest: PathBuf,
-        manifest: VirtualManifest,
-        gctx: &'gctx GlobalContext,
-    ) -> CargoResult<Workspace<'gctx>> {
-        let mut ws = Workspace::new_default(current_manifest, gctx);
-        ws.root_manifest = Some(root_path.join("Cargo.toml"));
-        ws.target_dir = gctx.target_dir()?;
-        ws.packages
-            .packages
-            .insert(root_path, MaybePackage::Virtual(manifest));
-        ws.find_members()?;
-        ws.set_resolve_behavior()?;
-        // TODO: validation does not work because it walks up the directory
-        // tree looking for the root which is a fake file that doesn't exist.
-        Ok(ws)
-    }
-
     /// Creates a "temporary workspace" from one package which only contains
     /// that package.
     ///
@@ -320,11 +301,11 @@ impl<'gctx> Workspace<'gctx> {
         }
         match self.gctx().get::<CargoResolverConfig>("resolver") {
             Ok(CargoResolverConfig {
-                something_like_precedence: Some(precedence),
+                incompatible_rust_versions: Some(incompatible_rust_versions),
             }) => {
                 if self.gctx().cli_unstable().msrv_policy {
                     self.resolve_honors_rust_version =
-                        precedence == CargoResolverPrecedence::SomethingLikeRustVersion;
+                        incompatible_rust_versions == IncompatibleRustVersions::Fallback;
                 } else {
                     self.gctx()
                         .shell()
@@ -332,7 +313,7 @@ impl<'gctx> Workspace<'gctx> {
                 }
             }
             Ok(CargoResolverConfig {
-                something_like_precedence: None,
+                incompatible_rust_versions: None,
             }) => {}
             Err(err) => {
                 if self.gctx().cli_unstable().msrv_policy {
@@ -1066,7 +1047,7 @@ impl<'gctx> Workspace<'gctx> {
                     );
                     self.gctx.shell().warn(&msg)
                 };
-                if manifest.resolved_toml().has_profiles() {
+                if manifest.normalized_toml().has_profiles() {
                     emit_warning("profiles")?;
                 }
                 if !manifest.replace().is_empty() {
@@ -1191,7 +1172,7 @@ impl<'gctx> Workspace<'gctx> {
         let mut error_count = 0;
         let toml_lints = pkg
             .manifest()
-            .resolved_toml()
+            .normalized_toml()
             .lints
             .clone()
             .map(|lints| lints.lints)
