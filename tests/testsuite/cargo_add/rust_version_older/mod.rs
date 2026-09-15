@@ -1,9 +1,9 @@
+use crate::prelude::*;
+use cargo_test_support::Project;
 use cargo_test_support::compare::assert_ui;
 use cargo_test_support::current_dir;
 use cargo_test_support::file;
-use cargo_test_support::prelude::*;
 use cargo_test_support::str;
-use cargo_test_support::Project;
 
 #[cargo_test]
 fn case() {
@@ -20,15 +20,10 @@ fn case() {
     let cwd = &project_root;
 
     snapbox::cmd::Command::cargo_ui()
-        .arg("-Zmsrv-policy")
         .arg("add")
         .arg_line("rust-version-user")
         .current_dir(cwd)
-        .env(
-            "CARGO_RESOLVER_SOMETHING_LIKE_PRECEDENCE",
-            "something-like-rust-version",
-        )
-        .masquerade_as_nightly_cargo(&["msrv-policy"])
+        .env("CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS", "fallback")
         .assert()
         .success()
         .stdout_eq(str![""])

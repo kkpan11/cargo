@@ -1,7 +1,7 @@
 //! Tests for the `cargo clean` command.
 
-use cargo_test_support::paths::CargoPathExt;
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
+use cargo_test_support::compare::assert_e2e;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
 use cargo_test_support::{
@@ -107,20 +107,25 @@ fn clean_multiple_packages_in_glob_char_path() {
         .file("Cargo.toml", &basic_bin_manifest("foo"))
         .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
         .build();
-    let foo_path = &p.build_dir().join("debug").join("deps");
+    let foo_path = &p.build_dir().join("debug").join("build");
 
     #[cfg(not(target_env = "msvc"))]
-    let file_glob = "foo-*";
+    let file_glob = "foo/*/out/foo*";
 
     #[cfg(target_env = "msvc")]
-    let file_glob = "foo.pdb";
+    let file_glob = "foo/*/out/foo.pdb";
 
     // Assert that build artifacts are produced
     p.cargo("build").run();
     assert_ne!(get_build_artifacts(foo_path, file_glob).len(), 0);
 
     // Assert that build artifacts are destroyed
-    p.cargo("clean -p foo").run();
+    p.cargo("clean -p foo")
+        .with_stderr_data(str![[r#"
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
+        .run();
     assert_eq!(get_build_artifacts(foo_path, file_glob).len(), 0);
 }
 
@@ -158,11 +163,11 @@ fn clean_p_only_cleans_specified_package() {
         .file("foo-base/src/lib.rs", "//! foo-base")
         .build();
 
-    let fingerprint_path = &p.build_dir().join("debug").join(".fingerprint");
+    let units_path = &p.build_dir().join("debug").join("build");
 
     p.cargo("build -p foo -p foo_core -p foo-base").run();
 
-    let mut fingerprint_names = get_fingerprints_without_hashes(fingerprint_path);
+    let mut fingerprint_names = get_fingerprints_without_hashes(units_path);
 
     // Artifacts present for all after building
     assert!(fingerprint_names.iter().any(|e| e == "foo"));
@@ -179,7 +184,7 @@ fn clean_p_only_cleans_specified_package() {
 
     p.cargo("clean -p foo").run();
 
-    fingerprint_names = get_fingerprints_without_hashes(fingerprint_path);
+    fingerprint_names = get_fingerprints_without_hashes(units_path);
 
     // Cleaning `foo` leaves artifacts for the others
     assert!(!fingerprint_names.iter().any(|e| e == "foo"));
@@ -205,13 +210,8 @@ fn get_fingerprints_without_hashes(fingerprint_path: &Path) -> Vec<String> {
         .filter_map(|entry| entry.ok())
         .map(|entry| {
             let name = entry.file_name();
-            let name = name
-                .into_string()
-                .expect("fingerprint name should be UTF-8");
-            name.rsplit_once('-')
-                .expect("Name should contain at least one hyphen")
-                .0
-                .to_owned()
+            name.into_string()
+                .expect("fingerprint name should be UTF-8")
         })
         .collect()
 }
@@ -230,6 +230,9 @@ fn clean_release() {
 
                 [dependencies]
                 a = { path = "a" }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/main.rs", "fn main() {}")
@@ -303,6 +306,43 @@ fn clean_doc() {
 }
 
 #[cargo_test]
+fn clean_doc_target() {
+    let target = rustc_host();
+    let p = project()
+        .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
+        .file("src/lib.rs", "")
+        .build();
+    let doc_path = p.build_dir().join(target).join("doc");
+
+    p.cargo("doc --target").arg(target).run();
+    assert!(doc_path.is_dir());
+
+    p.cargo("clean --doc --target")
+        .arg(target)
+        .with_stderr_data(str![[r#"
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
+        .run();
+    assert!(!doc_path.is_dir());
+
+    p.change_file(
+        ".cargo/config.toml",
+        &format!("[build]\ntarget = \"{target}\""),
+    );
+    p.cargo("doc").run();
+    assert!(doc_path.is_dir());
+
+    p.cargo("clean --doc")
+        .with_stderr_data(str![[r#"
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
+        .run();
+    assert!(!doc_path.is_dir());
+}
+
+#[cargo_test]
 fn build_script() {
     let p = project()
         .file(
@@ -342,7 +382,7 @@ fn build_script() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [RUNNING] `rustc [..] build.rs [..]`
-[RUNNING] `[ROOT]/foo/target/debug/build/foo-[HASH]/build-script-build`
+[RUNNING] `[ROOT]/foo/target/debug/build/foo/[HASH]/out/build_script_build`
 [RUNNING] `rustc [..] src/main.rs [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -440,23 +480,12 @@ fn clean_verbose() {
     Package::new("bar", "0.1.0").publish();
 
     p.cargo("build").run();
-    let mut expected = String::from(
-        "\
-[REMOVING] [ROOT]/foo/target/debug/.fingerprint/bar-[HASH]
-[REMOVING] [ROOT]/foo/target/debug/deps/libbar-[HASH].rlib
-[REMOVING] [ROOT]/foo/target/debug/deps/bar-[HASH].d
-[REMOVING] [ROOT]/foo/target/debug/deps/libbar-[HASH].rmeta
-",
-    );
-    if cfg!(target_os = "macos") {
-        // Rust 1.69 has changed so that split-debuginfo=unpacked includes unpacked for rlibs.
-        for _ in p.glob("target/debug/deps/bar-*.o") {
-            expected.push_str("[REMOVING] [ROOT]/foo/target/debug/deps/bar-[HASH][..].o\n");
-        }
-    }
-    expected.push_str("[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total\n");
     p.cargo("clean -p bar --verbose")
-        .with_stderr_data(&expected.unordered())
+        .with_stderr_data(str![[r#"
+[REMOVING] [ROOT]/foo/target/debug/build/bar
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
         .run();
     p.cargo("build").run();
 }
@@ -478,7 +507,11 @@ fn clean_remove_rlib_rmeta() {
 
     p.cargo("build").run();
     assert!(p.target_debug_dir().join("libfoo.rlib").exists());
-    let rmeta = p.glob("target/debug/deps/*.rmeta").next().unwrap().unwrap();
+    let rmeta = p
+        .glob("target/debug/build/*/*/out/*.rmeta")
+        .next()
+        .unwrap()
+        .unwrap();
     assert!(rmeta.exists());
     p.cargo("clean -p foo").run();
     assert!(!p.target_debug_dir().join("libfoo.rlib").exists());
@@ -597,8 +630,11 @@ fn assert_all_clean(build_dir: &Path) {
     }) {
         let entry = entry.unwrap();
         let path = entry.path();
-        if let ".rustc_info.json" | ".cargo-lock" | "CACHEDIR.TAG" =
-            path.file_name().unwrap().to_str().unwrap()
+        if let ".rustc_info.json"
+        | ".cargo-lock"
+        | ".cargo-build-lock"
+        | ".cargo-artifact-lock"
+        | "CACHEDIR.TAG" = path.file_name().unwrap().to_str().unwrap()
         {
             continue;
         }
@@ -639,7 +675,7 @@ fn clean_spec_version() {
         .with_stderr_data(str![[r#"
 [ERROR] package ID specification `baz` did not match any packages
 
-	Did you mean `bar`?
+[HELP] a package with a similar name exists: `bar`
 
 "#]])
         .run();
@@ -694,7 +730,7 @@ fn clean_spec_partial_version() {
         .with_stderr_data(str![[r#"
 [ERROR] package ID specification `baz` did not match any packages
 
-	Did you mean `bar`?
+[HELP] a package with a similar name exists: `bar`
 
 "#]])
         .run();
@@ -749,7 +785,7 @@ fn clean_spec_partial_version_ambiguous() {
         .with_stderr_data(str![[r#"
 [ERROR] package ID specification `baz` did not match any packages
 
-	Did you mean `bar`?
+[HELP] a package with a similar name exists: `bar`
 
 "#]])
         .run();
@@ -794,6 +830,9 @@ fn clean_spec_reserved() {
 
                 [dependencies]
                 bar = "1.0"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -802,7 +841,11 @@ fn clean_spec_reserved() {
 
     p.cargo("build --all-targets").run();
     assert!(p.target_debug_dir().join("build").is_dir());
-    let build_test = p.glob("target/debug/deps/build-*").next().unwrap().unwrap();
+    let build_test = p
+        .glob("target/debug/build/*/*/out/build-*")
+        .next()
+        .unwrap()
+        .unwrap();
     assert!(build_test.exists());
     // Tests are never "uplifted".
     assert!(p.glob("target/debug/build-*").next().is_none());
@@ -825,7 +868,6 @@ fn clean_spec_reserved() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn clean_dry_run() {
     // Basic `clean --dry-run` test.
@@ -850,7 +892,7 @@ fn clean_dry_run() {
     p.cargo("clean --dry-run")
         .with_stdout_data("")
         .with_stderr_data(str![[r#"
-[SUMMARY] [FILE_NUM] files
+[SUMMARY] 0 files
 [WARNING] no files deleted due to --dry-run
 
 "#]])
@@ -867,11 +909,14 @@ fn clean_dry_run() {
     // Verify it didn't delete anything.
     let after = p.build_dir().ls_r();
     assert_eq!(before, after);
-    let expected = itertools::join(before.iter().map(|p| p.to_str().unwrap()), "\n");
+    let mut expected = itertools::join(before.iter().map(|p| p.to_str().unwrap()), "\n");
+    expected.push_str("\n");
+    let expected = snapbox::filter::normalize_paths(&expected);
+    let expected = assert_e2e().redactions().redact(&expected);
     eprintln!("{expected}");
     // Verify the verbose output.
     p.cargo("clean --dry-run -v")
-        .with_stdout_unordered(expected)
+        .with_stdout_data(expected.unordered())
         .with_stderr_data(str![[r#"
 [SUMMARY] [FILE_NUM] files, [FILE_SIZE]B total
 [WARNING] no files deleted due to --dry-run
@@ -913,6 +958,261 @@ fn quiet_does_not_show_summary() {
         .with_stderr_data(str![[r#"
 [SUMMARY] [FILE_NUM] files, [FILE_SIZE]B total
 [WARNING] no files deleted due to --dry-run
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn explicit_target_dir_tag_not_present() {
+    // invalid target dir explicitly specified via --target-dir cli arg
+
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file("bar/.keep", "")
+        .build();
+
+    p.cargo("clean --target-dir bar")
+        .with_stdout_data("")
+        .with_stderr_data(str![[r#"
+[ERROR] cannot clean `[ROOT]/foo/bar`: missing or invalid `CACHEDIR.TAG` file
+  |
+  = [NOTE] cleaning has been aborted to prevent accidental deletion of unrelated files
+
+"#]])
+        .with_status(101)
+        .run();
+}
+
+#[cargo_test]
+fn explicit_target_dir_tag_invalid_signature() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file("bar/CACHEDIR.TAG", "Signature: 1234")
+        .build();
+
+    p.cargo("clean --target-dir bar")
+        .with_stdout_data("")
+        .with_stderr_data(str![[r#"
+[ERROR] cannot clean `[ROOT]/foo/bar`: invalid signature in `CACHEDIR.TAG` file
+  |
+  = [NOTE] cleaning has been aborted to prevent accidental deletion of unrelated files
+
+"#]])
+        .with_status(101)
+        .run();
+}
+
+#[cargo_test]
+fn explicit_target_dir_tag_symlink() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file(
+            "src/CACHEDIR.TAG",
+            "Signature: 8a477f597d28d172789f06886806bc55",
+        )
+        .symlink("src/CACHEDIR.TAG", "bar/CACHEDIR.TAG")
+        .build();
+
+    p.cargo("clean --target-dir bar")
+        .with_stdout_data("")
+        .with_stderr_data(str![[r#"
+[ERROR] cannot clean `[ROOT]/foo/bar`: expect `CACHEDIR.TAG` to be a regular file, got a symlink
+  |
+  = [NOTE] cleaning has been aborted to prevent accidental deletion of unrelated files
+
+"#]])
+        .with_status(101)
+        .run();
+}
+
+#[cargo_test]
+fn explicit_target_dir_tag_valid() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file(
+            "bar/CACHEDIR.TAG",
+            "Signature: 8a477f597d28d172789f06886806bc55",
+        )
+        .build();
+
+    p.cargo("clean --target-dir bar").run();
+}
+
+#[cargo_test]
+fn env_target_dir_tag_not_present() {
+    // invalid target dir specified via env var
+
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("bar/.keep", "")
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .build();
+
+    p.cargo("clean")
+        .env("CARGO_TARGET_DIR", "bar")
+        .with_stderr_data(str![[r#"
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn env_target_dir_tag_invalid_signature() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file("bar/CACHEDIR.TAG", "Signature: 1234")
+        .build();
+
+    p.cargo("clean")
+        .env("CARGO_TARGET_DIR", "bar")
+        .with_stderr_data(str![[r#"
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn env_target_dir_tag_symlink() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file(
+            "src/CACHEDIR.TAG",
+            "Signature: 8a477f597d28d172789f06886806bc55",
+        )
+        .symlink("src/CACHEDIR.TAG", "bar/CACHEDIR.TAG")
+        .build();
+
+    p.cargo("clean")
+        .env("CARGO_TARGET_DIR", "bar")
+        .with_stderr_data(str![[r#"
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn env_target_dir_tag_valid() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file(
+            "bar/CACHEDIR.TAG",
+            "Signature: 8a477f597d28d172789f06886806bc55",
+        )
+        .build();
+
+    p.cargo("clean").env("CARGO_TARGET_DIR", "bar").run();
+}
+
+#[cargo_test]
+fn config_target_dir_tag_not_present() {
+    // invalid target dir specified via build config
+
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("bar/.keep", "")
+        .file("src/foo.rs", "")
+        .file(
+            ".cargo/config.toml",
+            "[build]
+        target-dir = 'bar'",
+        )
+        .build();
+
+    p.cargo("clean")
+        .with_stderr_data(str![[r#"
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn config_target_dir_tag_invalid_signature() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file("bar/CACHEDIR.TAG", "Signature: 1234")
+        .file(
+            ".cargo/config.toml",
+            "[build]
+        target-dir = 'bar'",
+        )
+        .build();
+
+    p.cargo("clean")
+        .with_stderr_data(str![[r#"
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn config_target_dir_tag_symlink() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file(
+            "src/CACHEDIR.TAG",
+            "Signature: 8a477f597d28d172789f06886806bc55",
+        )
+        .symlink("src/CACHEDIR.TAG", "bar/CACHEDIR.TAG")
+        .file(
+            ".cargo/config.toml",
+            "[build]
+        target-dir = 'bar'",
+        )
+        .build();
+
+    p.cargo("clean")
+        .with_stderr_data(str![[r#"
+[REMOVED] [FILE_NUM] files, [FILE_SIZE]B total
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn config_target_dir_tag_valid() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .file(
+            "bar/CACHEDIR.TAG",
+            "Signature: 8a477f597d28d172789f06886806bc55",
+        )
+        .file(
+            ".cargo/config.toml",
+            "[build]
+        target-dir = 'bar'",
+        )
+        .build();
+
+    p.cargo("clean").run();
+}
+
+#[cargo_test]
+fn explicit_target_dir_not_exists() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/foo.rs", &main_file(r#""i am foo""#, &[]))
+        .build();
+
+    // should not error if target_dir does not exist
+    p.cargo("clean --target-dir bar")
+        .with_stderr_data(str![[r#"
+[REMOVED] 0 files
 
 "#]])
         .run();

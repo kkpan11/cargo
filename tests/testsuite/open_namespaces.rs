@@ -1,6 +1,5 @@
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::project;
-use cargo_test_support::registry::RegistryBuilder;
 use cargo_test_support::str;
 
 #[cargo_test]
@@ -32,7 +31,7 @@ Caused by:
   See https://doc.rust-lang.org/nightly/cargo/reference/unstable.html#open-namespaces for more information about the status of this feature.
 
 "#]])
-        .run()
+        .run();
 }
 
 #[cargo_test]
@@ -98,10 +97,10 @@ fn implicit_lib_within_namespace() {
   "version": "0.0.1"
 }
 "#]]
-            .json(),
+            .is_json(),
         )
         .with_stderr_data("")
-        .run()
+        .run();
 }
 
 #[cargo_test]
@@ -167,10 +166,10 @@ fn implicit_bin_within_namespace() {
   "version": "0.0.1"
 }
 "#]]
-            .json(),
+            .is_json(),
         )
         .with_stderr_data("")
-        .run()
+        .run();
 }
 
 #[cargo_test]
@@ -254,13 +253,13 @@ fn explicit_bin_within_namespace() {
   "version": "0.0.1"
 }
 "#]]
-            .json(),
+            .is_json(),
         )
         .with_stderr_data("")
-        .run()
+        .run();
 }
 
-#[cargo_test]
+#[cargo_test(nightly, reason = "-Zscript is unstable")]
 #[cfg(unix)]
 fn namespaced_script_name() {
     let p = cargo_test_support::project()
@@ -276,7 +275,8 @@ fn main() {}
         )
         .build();
 
-    p.cargo("read-manifest -Zscript --manifest-path foo::bar.rs")
+    p.cargo("read-manifest --manifest-path foo::bar.rs")
+        .arg("-Zscript")
         .masquerade_as_nightly_cargo(&["script", "open-namespaces"])
         .with_stdout_data(
             str![[r#"
@@ -290,7 +290,7 @@ fn main() {}
   "edition": "2021",
   "features": {},
   "homepage": null,
-  "id": "path+[ROOTURL]/foo#foo::bar@0.0.0",
+  "id": "path+[ROOTURL]/foo/foo::bar.rs#foo::bar@0.0.0",
   "keywords": [],
   "license": null,
   "license_file": null,
@@ -315,22 +315,113 @@ fn main() {}
         "bin"
       ],
       "name": "foo::bar",
-      "src_path": "[ROOT]/home/.cargo/target/[HASH]/foo::bar.rs",
+      "src_path": "[ROOT]/foo/foo::bar.rs",
       "test": true
     }
   ],
   "version": "0.0.0"
 }
 "#]]
-            .json(),
+            .is_json(),
         )
         .with_stderr_data("")
         .run();
 }
 
 #[cargo_test]
+fn generate_pkgid_with_namespace() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["open-namespaces"]
+
+                [package]
+                name = "foo::bar"
+                version = "0.0.1"
+                edition = "2015"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("generate-lockfile")
+        .masquerade_as_nightly_cargo(&["open-namespaces"])
+        .run();
+    p.cargo("pkgid")
+        .masquerade_as_nightly_cargo(&["open-namespaces"])
+        .with_stdout_data(str![[r#"
+path+[ROOTURL]/foo#foo::bar@0.0.1
+
+"#]])
+        .with_stderr_data("")
+        .run();
+}
+
+#[cargo_test]
+fn update_spec_accepts_namespaced_name() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["open-namespaces"]
+
+                [package]
+                name = "foo::bar"
+                version = "0.0.1"
+                edition = "2015"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("generate-lockfile")
+        .masquerade_as_nightly_cargo(&["open-namespaces"])
+        .run();
+    p.cargo("update foo::bar")
+        .masquerade_as_nightly_cargo(&["open-namespaces"])
+        .with_stdout_data(str![""])
+        .with_stderr_data(str![[r#"
+[LOCKING] 0 packages to highest compatible versions
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn update_spec_accepts_namespaced_pkgid() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                cargo-features = ["open-namespaces"]
+
+                [package]
+                name = "foo::bar"
+                version = "0.0.1"
+                edition = "2015"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("generate-lockfile")
+        .masquerade_as_nightly_cargo(&["open-namespaces"])
+        .run();
+    p.cargo(&format!("update path+{}#foo::bar@0.0.1", p.url()))
+        .masquerade_as_nightly_cargo(&["open-namespaces"])
+        .with_stdout_data(str![""])
+        .with_stderr_data(str![[r#"
+[LOCKING] 0 packages to highest compatible versions
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
 #[cfg(unix)] // until we get proper packaging support
 fn publish_namespaced() {
+    use cargo_test_support::registry::RegistryBuilder;
     let registry = RegistryBuilder::new().http_api().http_index().build();
 
     let p = project()
@@ -357,8 +448,9 @@ fn publish_namespaced() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] crates.io index
-[WARNING] manifest has no documentation, homepage or repository.
-See https://doc.rust-lang.org/cargo/reference/manifest.html#package-metadata for more info.
+[WARNING] manifest has no documentation, homepage or repository
+  |
+  = [NOTE] see https://doc.rust-lang.org/cargo/reference/manifest.html#package-metadata for more info
 [PACKAGING] foo::bar v0.0.1 ([ROOT]/foo)
 [ERROR] failed to prepare local package for uploading
 

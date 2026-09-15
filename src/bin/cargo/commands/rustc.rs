@@ -1,6 +1,5 @@
 use crate::command_prelude::*;
 use cargo::ops;
-use cargo::util::interning::InternedString;
 
 const PRINT_ARG_NAME: &str = "print";
 const CRATE_TYPE_ARG_NAME: &str = "crate-type";
@@ -38,23 +37,23 @@ pub fn cli() -> Command {
             "Build only the specified example",
             "Build all examples",
             "Build only the specified test target",
-            "Build all test targets",
+            "Build all targets that have `test = true` set",
             "Build only the specified bench target",
-            "Build all bench targets",
+            "Build all targets that have `bench = true` set",
             "Build all targets",
         )
         .arg_features()
         .arg_parallel()
         .arg_release("Build artifacts in release mode, with optimizations")
         .arg_profile("Build artifacts with the specified profile")
-        .arg_target_triple("Target triple which compiles will be for")
+        .arg_target_triple("Target tuple which compiles will be for")
         .arg_target_dir()
         .arg_unit_graph()
         .arg_timings()
         .arg_manifest_path()
         .arg_ignore_rust_version()
         .after_help(color_print::cstr!(
-            "Run `<cyan,bold>cargo help rustc</>` for more detailed information.\n"
+            "Run `<bright-cyan,bold>cargo help rustc</>` for more detailed information.\n"
         ))
 }
 
@@ -63,20 +62,20 @@ pub fn exec(gctx: &mut GlobalContext, args: &ArgMatches) -> CliResult {
     // This is a legacy behavior that changes the behavior based on the profile.
     // If we want to support this more formally, I think adding a --mode flag
     // would be warranted.
-    let mode = match args.get_one::<String>("profile").map(String::as_str) {
-        Some("test") => CompileMode::Test,
-        Some("bench") => CompileMode::Bench,
-        Some("check") => CompileMode::Check { test: false },
-        _ => CompileMode::Build,
+    let intent = match args.get_one::<String>("profile").map(String::as_str) {
+        Some("test") => UserIntent::Test,
+        Some("bench") => UserIntent::Bench,
+        Some("check") => UserIntent::Check { test: false },
+        _ => UserIntent::Build,
     };
     let mut compile_opts = args.compile_options_for_single_package(
         gctx,
-        mode,
+        intent,
         Some(&ws),
         ProfileChecking::LegacyRustc,
     )?;
     if compile_opts.build_config.requested_profile == "check" {
-        compile_opts.build_config.requested_profile = InternedString::new("dev");
+        compile_opts.build_config.requested_profile = "dev".into();
     }
     let target_args = values(args, "args");
     compile_opts.target_rustc_args = if target_args.is_empty() {
@@ -90,7 +89,19 @@ pub fn exec(gctx: &mut GlobalContext, args: &ArgMatches) -> CliResult {
         ops::print(&ws, &compile_opts, opt_value)?;
         return Ok(());
     }
-    let crate_types = values(args, CRATE_TYPE_ARG_NAME);
+
+    let crate_types = {
+        let mut seen = crate::util::data_structures::HashSet::default();
+        args.get_many::<String>(CRATE_TYPE_ARG_NAME)
+            .into_iter()
+            .flatten()
+            .flat_map(|s| s.split(','))
+            .filter(|s| !s.is_empty())
+            .map(String::from)
+            .filter(|s| seen.insert(s.clone()))
+            .collect::<Vec<String>>()
+    };
+
     compile_opts.target_rustc_crate_types = if crate_types.is_empty() {
         None
     } else {

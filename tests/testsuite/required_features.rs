@@ -1,11 +1,9 @@
 //! Tests for targets with `required-features`.
 
-use cargo_test_support::install::{
-    assert_has_installed_exe, assert_has_not_installed_exe, cargo_home,
-};
+use crate::prelude::*;
+use cargo_test_support::install::{assert_has_installed_exe, assert_has_not_installed_exe};
 use cargo_test_support::is_nightly;
-use cargo_test_support::paths::CargoPathExt;
-use cargo_test_support::prelude::*;
+use cargo_test_support::paths;
 use cargo_test_support::project;
 use cargo_test_support::str;
 
@@ -297,7 +295,7 @@ fn test_default_features() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] tests/foo.rs (target/debug/deps/foo-[HASH][EXE])
+[RUNNING] tests/foo.rs (target/debug/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -322,7 +320,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
     p.cargo("test --test=foo")
         .with_stderr_data(str![[r#"
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] tests/foo.rs (target/debug/deps/foo-[HASH][EXE])
+[RUNNING] tests/foo.rs (target/debug/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -373,7 +371,7 @@ fn test_arg_features() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] tests/foo.rs (target/debug/deps/foo-[HASH][EXE])
+[RUNNING] tests/foo.rs (target/debug/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -423,7 +421,7 @@ fn test_multiple_required_features() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] tests/foo_2.rs (target/debug/deps/foo_2-[HASH][EXE])
+[RUNNING] tests/foo_2.rs (target/debug/build/foo/[HASH]/out/foo_2-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -441,8 +439,8 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] tests/foo_1.rs (target/debug/deps/foo_1-[HASH][EXE])
-[RUNNING] tests/foo_2.rs (target/debug/deps/foo_2-[HASH][EXE])
+[RUNNING] tests/foo_1.rs (target/debug/build/foo/[HASH]/out/foo_1-[HASH][EXE])
+[RUNNING] tests/foo_2.rs (target/debug/build/foo/[HASH]/out/foo_2-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -509,7 +507,7 @@ fn bench_default_features() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] benches/foo.rs (target/release/deps/foo-[HASH][EXE])
+[RUNNING] benches/foo.rs (target/release/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -534,7 +532,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 1 measured; 0 filtered out; fini
     p.cargo("bench --bench=foo")
         .with_stderr_data(str![[r#"
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] benches/foo.rs (target/release/deps/foo-[HASH][EXE])
+[RUNNING] benches/foo.rs (target/release/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -595,7 +593,7 @@ fn bench_arg_features() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] benches/foo.rs (target/release/deps/foo-[HASH][EXE])
+[RUNNING] benches/foo.rs (target/release/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -665,7 +663,7 @@ fn bench_multiple_required_features() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] benches/foo_2.rs (target/release/deps/foo_2-[HASH][EXE])
+[RUNNING] benches/foo_2.rs (target/release/build/foo/[HASH]/out/foo_2-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -683,8 +681,8 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 1 measured; 0 filtered out; fini
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] benches/foo_1.rs (target/release/deps/foo_1-[HASH][EXE])
-[RUNNING] benches/foo_2.rs (target/release/deps/foo_2-[HASH][EXE])
+[RUNNING] benches/foo_1.rs (target/release/build/foo/[HASH]/out/foo_1-[HASH][EXE])
+[RUNNING] benches/foo_2.rs (target/release/build/foo/[HASH]/out/foo_2-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -743,7 +741,7 @@ fn install_default_features() {
         .build();
 
     p.cargo("install --path .").run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
     p.cargo("uninstall foo").run();
 
     p.cargo("install --path . --no-default-features")
@@ -757,10 +755,10 @@ Consider enabling some of the needed features by passing, e.g., `--features="a"`
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
 
     p.cargo("install --path . --bin=foo").run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
     p.cargo("uninstall foo").run();
 
     p.cargo("install --path . --bin=foo --no-default-features")
@@ -768,7 +766,7 @@ Consider enabling some of the needed features by passing, e.g., `--features="a"`
         .with_stderr_data(str![[r#"
 [INSTALLING] foo v0.0.1 ([ROOT]/foo)
 [ERROR] failed to compile `foo v0.0.1 ([ROOT]/foo)`, intermediate artifacts can be found at `[ROOT]/foo/target`.
-To reuse those artifacts with a future compilation, set the environment variable `CARGO_TARGET_DIR` to that path.
+To reuse those artifacts with a future compilation, set the environment variable `CARGO_BUILD_BUILD_DIR` to that path.
 
 Caused by:
   target `foo` in package `foo` requires the features: `a`
@@ -776,10 +774,10 @@ Caused by:
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
 
     p.cargo("install --path . --example=foo").run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
     p.cargo("uninstall foo").run();
 
     p.cargo("install --path . --example=foo --no-default-features")
@@ -787,7 +785,7 @@ Caused by:
         .with_stderr_data(str![[r#"
 [INSTALLING] foo v0.0.1 ([ROOT]/foo)
 [ERROR] failed to compile `foo v0.0.1 ([ROOT]/foo)`, intermediate artifacts can be found at `[ROOT]/foo/target`.
-To reuse those artifacts with a future compilation, set the environment variable `CARGO_TARGET_DIR` to that path.
+To reuse those artifacts with a future compilation, set the environment variable `CARGO_BUILD_BUILD_DIR` to that path.
 
 Caused by:
   target `foo` in package `foo` requires the features: `a`
@@ -795,7 +793,7 @@ Caused by:
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -822,7 +820,7 @@ fn install_arg_features() {
         .build();
 
     p.cargo("install --features a").run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
     p.cargo("uninstall foo").run();
 }
 
@@ -863,6 +861,9 @@ fn install_multiple_required_features() {
                 name = "foo_4"
                 path = "src/foo_4.rs"
                 required-features = ["a"]
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/foo_1.rs", "fn main() {}")
@@ -872,32 +873,32 @@ fn install_multiple_required_features() {
         .build();
 
     p.cargo("install --path .").run();
-    assert_has_not_installed_exe(cargo_home(), "foo_1");
-    assert_has_installed_exe(cargo_home(), "foo_2");
-    assert_has_not_installed_exe(cargo_home(), "foo_3");
-    assert_has_not_installed_exe(cargo_home(), "foo_4");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_1");
+    assert_has_installed_exe(paths::cargo_home(), "foo_2");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_3");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_4");
     p.cargo("uninstall foo").run();
 
     p.cargo("install --path . --bins --examples").run();
-    assert_has_not_installed_exe(cargo_home(), "foo_1");
-    assert_has_installed_exe(cargo_home(), "foo_2");
-    assert_has_not_installed_exe(cargo_home(), "foo_3");
-    assert_has_installed_exe(cargo_home(), "foo_4");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_1");
+    assert_has_installed_exe(paths::cargo_home(), "foo_2");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_3");
+    assert_has_installed_exe(paths::cargo_home(), "foo_4");
     p.cargo("uninstall foo").run();
 
     p.cargo("install --path . --features c").run();
-    assert_has_installed_exe(cargo_home(), "foo_1");
-    assert_has_installed_exe(cargo_home(), "foo_2");
-    assert_has_not_installed_exe(cargo_home(), "foo_3");
-    assert_has_not_installed_exe(cargo_home(), "foo_4");
+    assert_has_installed_exe(paths::cargo_home(), "foo_1");
+    assert_has_installed_exe(paths::cargo_home(), "foo_2");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_3");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_4");
     p.cargo("uninstall foo").run();
 
     p.cargo("install --path . --features c --bins --examples")
         .run();
-    assert_has_installed_exe(cargo_home(), "foo_1");
-    assert_has_installed_exe(cargo_home(), "foo_2");
-    assert_has_installed_exe(cargo_home(), "foo_3");
-    assert_has_installed_exe(cargo_home(), "foo_4");
+    assert_has_installed_exe(paths::cargo_home(), "foo_1");
+    assert_has_installed_exe(paths::cargo_home(), "foo_2");
+    assert_has_installed_exe(paths::cargo_home(), "foo_3");
+    assert_has_installed_exe(paths::cargo_home(), "foo_4");
     p.cargo("uninstall foo").run();
 
     p.cargo("install --path . --no-default-features")
@@ -955,10 +956,10 @@ Consider enabling some of the needed features by passing, e.g., `--features="b c
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo_1");
-    assert_has_not_installed_exe(cargo_home(), "foo_2");
-    assert_has_not_installed_exe(cargo_home(), "foo_3");
-    assert_has_not_installed_exe(cargo_home(), "foo_4");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_1");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_2");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_3");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo_4");
 }
 
 #[cargo_test]
@@ -1038,7 +1039,7 @@ fn dep_feature_in_toml() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] tests/foo.rs (target/debug/deps/foo-[HASH][EXE])
+[RUNNING] tests/foo.rs (target/debug/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -1059,7 +1060,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 [COMPILING] bar v0.0.1 ([ROOT]/foo/bar)
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] benches/foo.rs (target/release/deps/foo-[HASH][EXE])
+[RUNNING] benches/foo.rs (target/release/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
             .with_stdout_data(str![[r#"
@@ -1076,7 +1077,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 1 measured; 0 filtered out; fini
 
     // install
     p.cargo("install").run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
     p.cargo("uninstall foo").run();
 }
 
@@ -1155,7 +1156,7 @@ fn dep_feature_in_cmd_line() {
     // This is a no-op
     p.cargo("build")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1205,7 +1206,7 @@ Consider enabling them by passing, e.g., `--features="bar/a"`
 [COMPILING] bar v0.0.1 ([ROOT]/foo/bar)
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] tests/foo.rs (target/debug/deps/foo-[HASH][EXE])
+[RUNNING] tests/foo.rs (target/debug/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -1234,7 +1235,7 @@ test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fini
 [COMPILING] bar v0.0.1 ([ROOT]/foo/bar)
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] benches/foo.rs (target/release/deps/foo-[HASH][EXE])
+[RUNNING] benches/foo.rs (target/release/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
             .with_stdout_data(str![[r#"
@@ -1253,7 +1254,7 @@ test result: ok. 0 passed; 0 failed; 0 ignored; 1 measured; 0 filtered out; fini
     p.cargo("install --path .")
         .with_stderr_data(str![[r#"
 [INSTALLING] foo v0.0.1 ([ROOT]/foo)
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] invalid feature `bar/a` in required-features of target `foo`: dependency `bar` does not exist
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
 [WARNING] none of the package's binaries are available for install using the selected features
   bin "foo" requires the features: `bar/a`
@@ -1262,10 +1263,10 @@ Consider enabling some of the needed features by passing, e.g., `--features="bar
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
 
     p.cargo("install --features bar/a").run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
     p.cargo("uninstall foo").run();
 }
 
@@ -1288,6 +1289,9 @@ fn test_skips_compiling_bin_with_missing_required_features() {
                 name = "bin_foo"
                 path = "src/bin/foo.rs"
                 required-features = ["a"]
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/bin/foo.rs", "extern crate bar; fn main() {}")
@@ -1299,7 +1303,7 @@ fn test_skips_compiling_bin_with_missing_required_features() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] tests/foo.rs (target/debug/deps/foo-[HASH][EXE])
+[RUNNING] tests/foo.rs (target/debug/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -1326,7 +1330,7 @@ error[E0463]: can't find crate for `bar`
             .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] benches/foo.rs (target/release/deps/foo-[HASH][EXE])
+[RUNNING] benches/foo.rs (target/release/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]])
             .with_stdout_data(str![[r#"
@@ -1513,7 +1517,7 @@ fn renamed_required_features() {
     p.cargo("run")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [ERROR] target `x` in package `foo` requires the features: `a1/f1`
 Consider enabling them by passing, e.g., `--features="a1/f1"`
 

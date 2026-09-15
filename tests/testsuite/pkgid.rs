@@ -1,9 +1,12 @@
 //! Tests for the `cargo pkgid` command.
 
+use std::path::PathBuf;
+
+use crate::prelude::*;
+use cargo_test_support::basic_bin_manifest;
 use cargo_test_support::basic_lib_manifest;
 use cargo_test_support::compare::assert_e2e;
 use cargo_test_support::git;
-use cargo_test_support::prelude::*;
 use cargo_test_support::project;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
@@ -63,7 +66,7 @@ Caused by:
         .with_stderr_data(str![[r#"
 [ERROR] invalid package ID specification: `./bar`
 
-	Did you mean `bar`?
+[HELP] a package with a similar name exists: `bar`
 
 Caused by:
   package ID specification `./bar` looks like a file path, maybe try [ROOTURL]/foo/bar
@@ -106,7 +109,7 @@ registry+https://github.com/rust-lang/crates.io-index#crates-io@0.1.0
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] package ID specification `https://example.com/crates-io` did not match any packages
-Did you mean one of these?
+[HELP] there are similar package ID specifications:
 
   crates-io@0.1.0
 
@@ -119,7 +122,7 @@ Did you mean one of these?
         .with_stderr_data(str![[r#"
 [ERROR] package ID specification `crates_io` did not match any packages
 
-	Did you mean `crates-io`?
+[HELP] a package with a similar name exists: `crates-io`
 
 "#]])
         .run();
@@ -160,8 +163,8 @@ registry+https://github.com/rust-lang/crates.io-index#two-ver@0.2.0
     p.cargo("pkgid two-ver@0")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] There are multiple `two-ver` packages in your project, and the specification `two-ver@0` is ambiguous.
-Please re-run this command with one of the following specifications:
+[ERROR] specification `two-ver@0` is ambiguous
+[HELP] re-run this command with one of the following specifications
   two-ver@0.1.0
   two-ver@0.2.0
 
@@ -180,8 +183,8 @@ registry+https://github.com/rust-lang/crates.io-index#two-ver@0.2.0
     p.cargo("pkgid two-ver")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] There are multiple `two-ver` packages in your project, and the specification `two-ver` is ambiguous.
-Please re-run this command with one of the following specifications:
+[ERROR] specification `two-ver` is ambiguous
+[HELP] re-run this command with one of the following specifications
   two-ver@0.1.0
   two-ver@0.2.0
 
@@ -193,7 +196,7 @@ Please re-run this command with one of the following specifications:
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] package ID specification `two-ver@0.3.0` did not match any packages
-Did you mean one of these?
+[HELP] there are similar package ID specifications:
 
   two-ver@0.1.0
   two-ver@0.2.0
@@ -275,8 +278,8 @@ foo v0.1.0 ([ROOT]/foo)
     p.cargo("pkgid xyz")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] There are multiple `xyz` packages in your project, and the specification `xyz` is ambiguous.
-Please re-run this command with one of the following specifications:
+[ERROR] specification `xyz` is ambiguous
+[HELP] re-run this command with one of the following specifications
   git+[ROOTURL]/xyz?rev=[..]#0.5.0
   git+[ROOTURL]/xyz?rev=[..]#0.5.0
 
@@ -291,81 +294,51 @@ Please re-run this command with one of the following specifications:
 // * Package ID specifications
 // * machine-readable message via `--message-format=json`
 // * `cargo metadata` output
+// * SBOMs
 #[cargo_test]
 fn pkgid_json_message_metadata_consistency() {
     let p = project()
-        .file("Cargo.toml", &basic_lib_manifest("foo"))
-        .file("src/lib.rs", "fn unused() {}")
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/main.rs", "fn main() {}")
         .file("build.rs", "fn main() {}")
         .build();
 
     p.cargo("generate-lockfile").run();
 
-    let output = p.cargo("pkgid").arg("foo").exec_with_output().unwrap();
+    let output = p.cargo("pkgid").arg("foo").run();
     let pkgid = String::from_utf8(output.stdout).unwrap();
     let pkgid = pkgid.trim();
     assert_e2e().eq(pkgid, str!["path+[ROOTURL]/foo#0.5.0"]);
 
-    #[allow(deprecated)]
     p.cargo("check --message-format=json")
-        .with_json(
-            &r#"
-{
-  "reason": "compiler-artifact",
-  "package_id": "$PKGID",
-  "manifest_path": "[..]",
-  "target": "{...}",
-  "profile": "{...}",
-  "features": [],
-  "filenames": "{...}",
-  "executable": null,
-  "fresh": false
-}
-
-{
-  "reason": "build-script-executed",
-  "package_id": "$PKGID",
-  "linked_libs": [],
-  "linked_paths": [],
-  "cfgs": [],
-  "env": [],
-  "out_dir": "[..]"
-}
-
-{
-  "manifest_path": "[..]",
-  "message": "{...}",
-  "package_id": "$PKGID",
-  "reason": "compiler-message",
-  "target": "{...}"
-}
-
-{
-  "reason": "compiler-message",
-  "package_id": "$PKGID",
-  "manifest_path": "[..]",
-  "target": "{...}",
-  "message": "{...}"
-}
-
-{
-  "reason": "compiler-artifact",
-  "package_id": "$PKGID",
-  "manifest_path": "[..]",
-  "target": "{...}",
-  "profile": "{...}",
-  "features": [],
-  "filenames": "{...}",
-  "executable": null,
-  "fresh": false
-}
-
-{
-  "reason": "build-finished",
-  "success": true
-}
-            "#
-            .replace("$PKGID", pkgid),
+        .with_stdout_data(
+            str![[r#"
+[
+  {
+    "manifest_path": "[ROOT]/foo/Cargo.toml",
+    "package_id": "path+[ROOTURL]/foo#0.5.0",
+    "reason": "compiler-artifact",
+    "...": "{...}"
+  },
+  {
+    "package_id": "path+[ROOTURL]/foo#0.5.0",
+    "reason": "build-script-executed",
+    "...": "{...}"
+  },
+  {
+    "manifest_path": "[ROOT]/foo/Cargo.toml",
+    "package_id": "path+[ROOTURL]/foo#0.5.0",
+    "reason": "compiler-artifact",
+    "...": "{...}"
+  },
+  {
+    "reason": "build-finished",
+    "success": true
+  }
+]
+"#]]
+            .is_json()
+            .against_jsonlines(),
         )
         .run();
 
@@ -416,6 +389,7 @@ fn pkgid_json_message_metadata_consistency() {
     "root": "path+[ROOTURL]/foo#0.5.0"
   },
   "target_directory": "[ROOT]/foo/target",
+  "build_directory": "[ROOT]/foo/target",
   "version": 1,
   "workspace_default_members": [
     "path+[ROOTURL]/foo#0.5.0"
@@ -426,7 +400,57 @@ fn pkgid_json_message_metadata_consistency() {
   "workspace_root": "[ROOT]/foo"
 }
 "#]]
-            .json(),
+            .is_json(),
         )
-        .run()
+        .run();
+
+    p.cargo("build")
+        .env("CARGO_BUILD_SBOM", "true")
+        .arg("-Zsbom")
+        .masquerade_as_nightly_cargo(&["sbom"])
+        .run();
+
+    let path = {
+        let mut path = p.bin("foo").into_os_string();
+        path.push(".cargo-sbom.json");
+        PathBuf::from(path)
+    };
+
+    assert!(path.is_file());
+    let output = std::fs::read_to_string(&path).unwrap();
+    assert_e2e().eq(
+        output,
+        cargo_test_support::str![[r#"
+{
+  "crates": [
+    {
+      "dependencies": [
+        {
+          "index": 1,
+          "kind": "build"
+        }
+      ],
+      "features": [],
+      "id": "path+[ROOTURL]/foo#0.5.0",
+      "kind": [
+        "bin"
+      ]
+    },
+    {
+      "dependencies": [],
+      "features": [],
+      "id": "path+[ROOTURL]/foo#0.5.0",
+      "kind": [
+        "custom-build"
+      ]
+    }
+  ],
+  "root": 0,
+  "rustc": "{...}",
+  "target": "[HOST_TARGET]",
+  "version": 1
+}
+"#]]
+        .is_json(),
+    );
 }

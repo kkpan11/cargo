@@ -1,13 +1,24 @@
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::project;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
 
+mod blanket_hint_mostly_unused;
 mod error;
-mod implicit_features;
 mod inherited;
+mod manual_readme;
+mod missing_lints_inheritance;
+mod non_kebab_case_bins;
+mod non_kebab_case_features;
+mod non_kebab_case_packages;
+mod non_snake_case_features;
+mod non_snake_case_packages;
+mod redundant_homepage;
+mod text_direction_codepoint;
 mod unknown_lints;
-mod unused_optional_dependencies;
+mod unused_dependencies;
+mod unused_workspace_dependencies;
+mod unused_workspace_package_fields;
 mod warning;
 
 #[cargo_test]
@@ -26,25 +37,23 @@ authors = []
 im-a-teapot = true
 
 [lints.cargo]
-im-a-teapot = "warn"
+im_a_teapot = "warn"
             "#,
         )
         .file("src/lib.rs", "")
         .build();
 
-    foo.cargo("check -Zcargo-lints")
-        .masquerade_as_nightly_cargo(&["cargo-lints", "test-dummy-unstable"])
+    foo.cargo("fetch")
+        .masquerade_as_nightly_cargo(&["test-dummy-unstable"])
         .with_stderr_data(str![[r#"
-[WARNING] unknown lint: `im-a-teapot`
-  --> Cargo.toml:12:1
-   |
-12 | im-a-teapot = "warn"
-   | ^^^^^^^^^^^
-   |
-   = [NOTE] `cargo::unknown_lints` is set to `warn` by default
-   = [HELP] there is a lint with a similar name: `im_a_teapot`
-[CHECKING] foo v0.0.1 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[WARNING] `im_a_teapot` is specified
+ --> Cargo.toml:9:1
+  |
+9 | im-a-teapot = true
+  | ^^^^^^^^^^^^^^^^^^
+  |
+  = [NOTE] `cargo::im_a_teapot` is set to `warn` in `[lints]`
+[WARNING] `foo` (manifest) generated 1 warning
 
 "#]])
         .run();
@@ -73,8 +82,8 @@ test_dummy_unstable = { level = "forbid", priority = -1 }
         .file("src/lib.rs", "")
         .build();
 
-    p.cargo("check -Zcargo-lints")
-        .masquerade_as_nightly_cargo(&["cargo-lints", "test-dummy-unstable"])
+    p.cargo("fetch")
+        .masquerade_as_nightly_cargo(&["test-dummy-unstable"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] `im_a_teapot` is specified
@@ -84,6 +93,7 @@ test_dummy_unstable = { level = "forbid", priority = -1 }
   | ^^^^^^^^^^^^^^^^^^
   |
   = [NOTE] `cargo::im_a_teapot` is set to `forbid` in `[lints]`
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
 
 "#]])
         .run();
@@ -115,8 +125,8 @@ workspace = true
         .file("src/lib.rs", "")
         .build();
 
-    p.cargo("check -Zcargo-lints")
-        .masquerade_as_nightly_cargo(&["cargo-lints", "test-dummy-unstable"])
+    p.cargo("fetch")
+        .masquerade_as_nightly_cargo(&["test-dummy-unstable"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] `im_a_teapot` is specified
@@ -126,6 +136,7 @@ workspace = true
    | ^^^^^^^^^^^^^^^^^^
    |
    = [NOTE] `cargo::im_a_teapot` is set to `forbid` in `[lints]`
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
 
 "#]])
         .run();
@@ -137,6 +148,8 @@ fn dont_always_inherit_workspace_lints() {
         .file(
             "Cargo.toml",
             r#"
+cargo-features = ["test-dummy-unstable"]
+
 [workspace]
 members = ["foo"]
 
@@ -160,11 +173,24 @@ im-a-teapot = true
         .file("foo/src/lib.rs", "")
         .build();
 
-    p.cargo("check -Zcargo-lints")
-        .masquerade_as_nightly_cargo(&["cargo-lints"])
+    p.cargo("fetch")
+        .masquerade_as_nightly_cargo(&["test-dummy-unstable"])
         .with_stderr_data(str![[r#"
-[CHECKING] foo v0.0.1 ([ROOT]/foo/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[WARNING] missing `[lints]` to inherit `[workspace.lints]`
+  --> foo/Cargo.toml
+   = [NOTE] `cargo::missing_lints_inheritance` is set to `warn` by default
+[HELP] to inherit `workspace.lints, add:
+   |
+ 9 ~ im-a-teapot = true
+10 + [lints]
+11 + workspace = true
+   |
+[HELP] to clarify your intent to not inherit, add:
+   |
+ 9 ~ im-a-teapot = true
+10 + [lints]
+   |
+[WARNING] `foo` (manifest) generated 1 warning
 
 "#]])
         .run();
@@ -177,16 +203,19 @@ fn cap_lints() {
         .file(
             "Cargo.toml",
             r#"
+cargo-features = ["test-dummy-unstable"]
+
 [package]
 name = "bar"
 version = "0.1.0"
 edition = "2021"
+im-a-teapot = true
 
 [dependencies]
 baz = { version = "0.1.0", optional = true }
 
 [lints.cargo]
-implicit_features = "warn"
+im_a_teapot = "warn"
 "#,
         )
         .file("src/lib.rs", "")
@@ -202,24 +231,18 @@ edition = "2021"
 
 [dependencies]
 bar = "0.1.0"
-
-[lints.cargo]
-implicit_features = "warn"
 "#,
         )
         .file("src/lib.rs", "")
         .build();
 
-    p.cargo("check -Zcargo-lints")
-        .masquerade_as_nightly_cargo(&["cargo-lints"])
+    p.cargo("fetch")
+        .masquerade_as_nightly_cargo(&["test-dummy-unstable"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
-[DOWNLOADED] bar v0.1.0 (registry `dummy-registry`)
-[CHECKING] bar v0.1.0
-[CHECKING] foo v0.1.0 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+...
 
 "#]])
         .run();
@@ -244,8 +267,7 @@ im_a_teapot = "warn"
         .file("src/lib.rs", "")
         .build();
 
-    p.cargo("check -Zcargo-lints")
-        .masquerade_as_nightly_cargo(&["cargo-lints"])
+    p.cargo("fetch")
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] use of unstable lint `im_a_teapot`
@@ -255,7 +277,7 @@ im_a_teapot = "warn"
   | ^^^^^^^^^^^ this is behind `test-dummy-unstable`, which is not enabled
   |
   = [HELP] consider adding `cargo-features = ["test-dummy-unstable"]` to the top of the manifest
-[ERROR] encountered 1 errors(s) while verifying lints
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
 
 "#]])
         .run();
@@ -291,8 +313,7 @@ workspace = true
         .file("foo/src/lib.rs", "")
         .build();
 
-    p.cargo("check -Zcargo-lints")
-        .masquerade_as_nightly_cargo(&["cargo-lints"])
+    p.cargo("fetch")
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] use of unstable lint `im_a_teapot`
@@ -301,11 +322,55 @@ workspace = true
 6 | im_a_teapot = { level = "warn", priority = 10 }
   | ^^^^^^^^^^^ this is behind `test-dummy-unstable`, which is not enabled
   |
-[NOTE] `cargo::im_a_teapot` was inherited
- --> foo/Cargo.toml:9:1
+  = [HELP] consider adding `cargo-features = ["test-dummy-unstable"]` to the top of the manifest
+[ERROR] use of unstable lint `test_dummy_unstable`
+ --> Cargo.toml:7:1
   |
-9 | workspace = true
-  | ----------------
+7 | test_dummy_unstable = { level = "forbid", priority = -1 }
+  | ^^^^^^^^^^^^^^^^^^^ this is behind `test-dummy-unstable`, which is not enabled
+  |
+  = [HELP] consider adding `cargo-features = ["test-dummy-unstable"]` to the top of the manifest
+[ERROR] could not parse workspace (manifest) due to 2 previous errors
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn check_feature_gated_workspace_not_inherited() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+[workspace]
+members = ["foo"]
+
+[workspace.lints.cargo]
+im_a_teapot = { level = "warn", priority = 10 }
+test_dummy_unstable = { level = "forbid", priority = -1 }
+            "#,
+        )
+        .file(
+            "foo/Cargo.toml",
+            r#"
+[package]
+name = "foo"
+version = "0.0.1"
+edition = "2015"
+authors = []
+            "#,
+        )
+        .file("foo/src/lib.rs", "")
+        .build();
+
+    p.cargo("fetch")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] use of unstable lint `im_a_teapot`
+ --> Cargo.toml:6:1
+  |
+6 | im_a_teapot = { level = "warn", priority = 10 }
+  | ^^^^^^^^^^^ this is behind `test-dummy-unstable`, which is not enabled
   |
   = [HELP] consider adding `cargo-features = ["test-dummy-unstable"]` to the top of the manifest
 [ERROR] use of unstable lint `test_dummy_unstable`
@@ -314,14 +379,107 @@ workspace = true
 7 | test_dummy_unstable = { level = "forbid", priority = -1 }
   | ^^^^^^^^^^^^^^^^^^^ this is behind `test-dummy-unstable`, which is not enabled
   |
-[NOTE] `cargo::test_dummy_unstable` was inherited
- --> foo/Cargo.toml:9:1
-  |
-9 | workspace = true
-  | ----------------
-  |
   = [HELP] consider adding `cargo-features = ["test-dummy-unstable"]` to the top of the manifest
-[ERROR] encountered 2 errors(s) while verifying lints
+[ERROR] could not parse workspace (manifest) due to 2 previous errors
+[WARNING] missing `[lints]` to inherit `[workspace.lints]`
+ --> foo/Cargo.toml
+  = [NOTE] `cargo::missing_lints_inheritance` is set to `warn` by default
+[HELP] to inherit `workspace.lints, add:
+  |
+7 ~             
+8 + [lints]
+9 + workspace = true
+  |
+[HELP] to clarify your intent to not inherit, add:
+  |
+7 ~             
+8 + [lints]
+  |
+[WARNING] `foo` (manifest) generated 1 warning
+
+"#]])
+        .run();
+}
+
+#[cargo_test(nightly, reason = "-Zrustc-unicode is unstable")]
+fn unicode_report() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+cargo-features = ["test-dummy-unstable"]
+
+[package]
+name = "foo"
+version = "0.0.1"
+edition = "2015"
+authors = []
+im-a-teapot = true
+
+[lints.cargo]
+im_a_teapot = { level = "warn", priority = 10 }
+"#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("fetch")
+        .arg("-Zrustc-unicode")
+        .masquerade_as_nightly_cargo(&["rustc-unicode", "test-dummy-unstable"])
+        .with_stderr_data(str![[r#"
+[WARNING] `im_a_teapot` is specified
+  ╭▸ Cargo.toml:9:1
+  │
+9 │ im-a-teapot = true
+  │ ━━━━━━━━━━━━━━━━━━
+  │
+  ╰ [NOTE] `cargo::im_a_teapot` is set to `warn` in `[lints]`
+[WARNING] `foo` (manifest) generated 1 warning
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn explicit_lint_level_overrides_default() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+            [package]
+            name = "foo"
+            version = "0.1.0"
+            authors = []
+            edition = "2018"
+            repository = "https://github.com/rust-lang/cargo/"
+            homepage = "https://github.com/rust-lang/cargo/"
+
+            [lints.cargo]
+            redundant_homepage = "deny"
+        "#,
+        )
+        .file(
+            "src/main.rs",
+            r#"
+            fn main() {}
+            "#,
+        )
+        .build();
+
+    p.cargo("fetch")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] `package.homepage` is redundant with `package.repository`
+ --> Cargo.toml:8:24
+  |
+7 |             repository = "https://github.com/rust-lang/cargo/"
+  |                          -------------------------------------
+8 |             homepage = "https://github.com/rust-lang/cargo/"
+  |                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = [NOTE] `cargo::redundant_homepage` is set to `deny` in `[lints]`
+[HELP] consider removing `package.homepage`
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
 
 "#]])
         .run();

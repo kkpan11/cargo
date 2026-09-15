@@ -1,7 +1,7 @@
 use crate::process_error::ProcessError;
 use crate::read2;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use jobserver::Client;
 use shell_escape::escape;
 use tempfile::NamedTempFile;
@@ -13,13 +13,15 @@ use std::fmt;
 use std::io::{self, Write};
 use std::iter::once;
 use std::path::Path;
-use std::process::{Command, ExitStatus, Output, Stdio};
+use std::process::{Command, ExitStatus, Output};
 
 /// A builder object for an external process, similar to [`std::process::Command`].
 #[derive(Clone, Debug)]
 pub struct ProcessBuilder {
     /// The program to execute.
     program: OsString,
+    /// Best-effort replacement for arg0
+    arg0: Option<OsString>,
     /// A list of arguments to pass to the program.
     args: Vec<OsString>,
     /// Any environment variables that should be set for the program.
@@ -41,6 +43,8 @@ pub struct ProcessBuilder {
     retry_with_argfile: bool,
     /// Data to write to stdin.
     stdin: Option<Vec<u8>>,
+    stdout: Option<Stdio>,
+    stderr: Option<Stdio>,
 }
 
 impl fmt::Display for ProcessBuilder {
@@ -75,6 +79,7 @@ impl ProcessBuilder {
     pub fn new<T: AsRef<OsStr>>(cmd: T) -> ProcessBuilder {
         ProcessBuilder {
             program: cmd.as_ref().to_os_string(),
+            arg0: None,
             args: Vec::new(),
             cwd: None,
             env: BTreeMap::new(),
@@ -83,12 +88,20 @@ impl ProcessBuilder {
             display_env_vars: false,
             retry_with_argfile: false,
             stdin: None,
+            stdout: None,
+            stderr: None,
         }
     }
 
     /// (chainable) Sets the executable for the process.
     pub fn program<T: AsRef<OsStr>>(&mut self, program: T) -> &mut ProcessBuilder {
         self.program = program.as_ref().to_os_string();
+        self
+    }
+
+    /// (chainable) Overrides `arg0` for this program.
+    pub fn arg0<T: AsRef<OsStr>>(&mut self, arg: T) -> &mut ProcessBuilder {
+        self.arg0 = Some(arg.as_ref().to_os_string());
         self
     }
 
@@ -137,9 +150,30 @@ impl ProcessBuilder {
         self
     }
 
+    /// (chainable) Configure the process's stdout handle
+    ///
+    /// Only applies when used with [`Self::status`] and [`Self::exec`]
+    pub fn stdout<T: Into<Stdio>>(&mut self, cfg: T) -> &mut ProcessBuilder {
+        self.stdout = Some(cfg.into());
+        self
+    }
+
+    /// (chainable) Configure the process's stderr handle
+    ///
+    /// Only applies when used with [`Self::status`] and [`Self::exec`]
+    pub fn stderr<T: Into<Stdio>>(&mut self, cfg: T) -> &mut ProcessBuilder {
+        self.stderr = Some(cfg.into());
+        self
+    }
+
     /// Gets the executable name.
     pub fn get_program(&self) -> &OsString {
         self.wrappers.last().unwrap_or(&self.program)
+    }
+
+    /// Gets the program arg0.
+    pub fn get_arg0(&self) -> Option<&OsStr> {
+        self.arg0.as_deref()
     }
 
     /// Gets the program arguments.
@@ -158,7 +192,7 @@ impl ProcessBuilder {
     }
 
     /// Gets an environment variable as the process will see it (will inherit from environment
-    /// unless explicitally unset).
+    /// unless explicitly unset).
     pub fn get_env(&self, var: &str) -> Option<OsString> {
         self.env
             .get(var)
@@ -229,6 +263,12 @@ impl ProcessBuilder {
     fn _status(&self) -> io::Result<ExitStatus> {
         if !debug_force_argfile(self.retry_with_argfile) {
             let mut cmd = self.build_command();
+            if let Some(stdout) = &self.stdout {
+                cmd.stdout(stdout.to_std());
+            }
+            if let Some(stderr) = &self.stderr {
+                cmd.stderr(stderr.to_std());
+            }
             match cmd.spawn() {
                 Err(ref e) if self.should_retry_with_argfile(e) => {}
                 Err(e) => return Err(e),
@@ -236,6 +276,12 @@ impl ProcessBuilder {
             }
         }
         let (mut cmd, argfile) = self.build_command_with_argfile()?;
+        if let Some(stdout) = &self.stdout {
+            cmd.stdout(stdout.to_std());
+        }
+        if let Some(stderr) = &self.stderr {
+            cmd.stderr(stderr.to_std());
+        }
         let status = cmd.spawn()?.wait();
         close_tempfile_and_log_error(argfile);
         status
@@ -483,6 +529,11 @@ impl ProcessBuilder {
             cmd.args(iter);
             cmd
         };
+        #[cfg(unix)]
+        if let Some(arg0) = self.get_arg0() {
+            use std::os::unix::process::CommandExt as _;
+            command.arg0(arg0);
+        }
         if let Some(cwd) = self.get_cwd() {
             command.current_dir(cwd);
         }
@@ -538,15 +589,34 @@ impl ProcessBuilder {
     }
 }
 
+#[derive(Clone, Debug)]
+pub enum Stdio {
+    Piped,
+    Inherit,
+    Null,
+}
+
+impl Stdio {
+    fn to_std(&self) -> std::process::Stdio {
+        match self {
+            Self::Piped => std::process::Stdio::piped(),
+            Self::Inherit => std::process::Stdio::inherit(),
+            Self::Null => std::process::Stdio::null(),
+        }
+    }
+}
+
 /// Forces the command to use `@path` argfile.
 ///
 /// You should set `__CARGO_TEST_FORCE_ARGFILE` to enable this.
 fn debug_force_argfile(retry_enabled: bool) -> bool {
-    cfg!(debug_assertions) && env::var("__CARGO_TEST_FORCE_ARGFILE").is_ok() && retry_enabled
+    retry_enabled && env::var("__CARGO_TEST_FORCE_ARGFILE").is_ok()
 }
 
 /// Creates new pipes for stderr, stdout, and optionally stdin.
 fn piped(cmd: &mut Command, pipe_stdin: bool) -> &mut Command {
+    use std::process::Stdio;
+
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(if pipe_stdin {
@@ -564,7 +634,7 @@ fn close_tempfile_and_log_error(file: NamedTempFile) {
 
 #[cfg(unix)]
 mod imp {
-    use super::{close_tempfile_and_log_error, debug_force_argfile, ProcessBuilder, ProcessError};
+    use super::{ProcessBuilder, ProcessError, close_tempfile_and_log_error, debug_force_argfile};
     use anyhow::Result;
     use std::io;
     use std::os::unix::process::CommandExt;
@@ -606,8 +676,9 @@ mod imp {
     use super::{ProcessBuilder, ProcessError};
     use anyhow::Result;
     use std::io;
-    use windows_sys::Win32::Foundation::{BOOL, FALSE, TRUE};
+    use windows_sys::Win32::Foundation::{FALSE, TRUE};
     use windows_sys::Win32::System::Console::SetConsoleCtrlHandler;
+    use windows_sys::core::BOOL;
 
     unsafe extern "system" fn ctrlc_handler(_: u32) -> BOOL {
         // Do nothing; let the child process handle it.

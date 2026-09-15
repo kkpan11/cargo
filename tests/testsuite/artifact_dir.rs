@@ -4,7 +4,7 @@ use std::env;
 use std::fs;
 use std::path::Path;
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::sleep_ms;
 use cargo_test_support::str;
 use cargo_test_support::{basic_manifest, project};
@@ -15,7 +15,8 @@ fn binary_with_debug() {
         .file("src/main.rs", r#"fn main() { println!("Hello, World!") }"#)
         .build();
 
-    p.cargo("build -Z unstable-options --artifact-dir out")
+    p.cargo("build --artifact-dir out")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .enable_mac_dsym()
         .run();
@@ -52,7 +53,8 @@ fn static_library_with_debug() {
         )
         .build();
 
-    p.cargo("build -Z unstable-options --artifact-dir out")
+    p.cargo("build --artifact-dir out")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .run();
     check_dir_contents(
@@ -88,7 +90,8 @@ fn dynamic_library_with_debug() {
         )
         .build();
 
-    p.cargo("build -Z unstable-options --artifact-dir out")
+    p.cargo("build --artifact-dir out")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .enable_mac_dsym()
         .run();
@@ -124,7 +127,8 @@ fn rlib_with_debug() {
         )
         .build();
 
-    p.cargo("build -Z unstable-options --artifact-dir out")
+    p.cargo("build --artifact-dir out")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .run();
     check_dir_contents(
@@ -168,7 +172,8 @@ fn include_only_the_binary_from_the_current_package() {
         .file("utils/src/lib.rs", "")
         .build();
 
-    p.cargo("build -Z unstable-options --bin foo --artifact-dir out")
+    p.cargo("build --bin foo --artifact-dir out")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .enable_mac_dsym()
         .run();
@@ -188,7 +193,8 @@ fn artifact_dir_is_a_file() {
         .file("out", "")
         .build();
 
-    p.cargo("build -Z unstable-options --artifact-dir out")
+    p.cargo("build --artifact-dir out")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .with_status(101)
         .with_stderr_data(str![[r#"
@@ -208,7 +214,8 @@ fn replaces_artifacts() {
         .file("src/main.rs", r#"fn main() { println!("foo") }"#)
         .build();
 
-    p.cargo("build -Z unstable-options --artifact-dir out")
+    p.cargo("build --artifact-dir out")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .run();
     p.process(
@@ -224,7 +231,8 @@ foo
     sleep_ms(1000);
     p.change_file("src/main.rs", r#"fn main() { println!("bar") }"#);
 
-    p.cargo("build -Z unstable-options --artifact-dir out")
+    p.cargo("build --artifact-dir out")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .run();
     p.process(
@@ -256,7 +264,8 @@ fn avoid_build_scripts() {
         .file("b/build.rs", r#"fn main() { println!("hello-build-b"); }"#)
         .build();
 
-    p.cargo("build -Z unstable-options --artifact-dir out -vv")
+    p.cargo("build --artifact-dir out -vv")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .enable_mac_dsym()
         .with_stdout_data(
@@ -290,7 +299,8 @@ fn cargo_build_artifact_dir() {
         )
         .build();
 
-    p.cargo("build -Z unstable-options")
+    p.cargo("build")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .enable_mac_dsym()
         .run();
@@ -309,7 +319,8 @@ fn unsupported_short_artifact_dir_flag() {
         .file("src/main.rs", r#"fn main() { println!("Hello, World!") }"#)
         .build();
 
-    p.cargo("build -Z unstable-options -O")
+    p.cargo("build -O")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .with_stderr_data(str![[r#"
 [ERROR] unexpected argument '-O' found
@@ -326,60 +337,41 @@ For more information, try '--help'.
 }
 
 #[cargo_test]
-fn deprecated_out_dir() {
+fn removed_out_dir_flag() {
     let p = project()
         .file("src/main.rs", r#"fn main() { println!("Hello, World!") }"#)
         .build();
 
-    p.cargo("build -Z unstable-options --out-dir out")
+    p.cargo("build --out-dir out")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["out-dir"])
+        .with_status(1)
         .enable_mac_dsym()
         .with_stderr_data(str![[r#"
-[WARNING] the --out-dir flag has been changed to --artifact-dir
-[COMPILING] foo v0.0.1 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[ERROR] unexpected argument '--out-dir' found
+
+  tip: a similar argument exists: '--artifact-dir'
+
+Usage: cargo[EXE] build [OPTIONS]
+
+For more information, try '--help'.
 
 "#]])
         .run();
-    check_dir_contents(
-        &p.root().join("out"),
-        &["foo"],
-        &["foo", "foo.dSYM"],
-        &["foo.exe", "foo.pdb"],
-        &["foo.exe"],
-    );
 }
 
 #[cargo_test]
-fn cargo_build_deprecated_out_dir() {
-    let p = project()
-        .file("src/main.rs", r#"fn main() { println!("Hello, World!") }"#)
-        .file(
-            ".cargo/config.toml",
-            r#"
-            [build]
-            out-dir = "out"
-            "#,
-        )
-        .build();
+fn artifact_dir_rejected_on_stable() {
+    let p = project().file("src/main.rs", "fn main() {}").build();
 
-    p.cargo("build -Z unstable-options")
-        .masquerade_as_nightly_cargo(&["out-dir"])
-        .enable_mac_dsym()
-        .with_stderr_data(str![[r#"
-[WARNING] the out-dir config option has been changed to artifact-dir
-[COMPILING] foo v0.0.1 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+    p.cargo("build --artifact-dir out")
+        .with_status(101)
+        .with_stderr_data(str![[r#"[ERROR] the `--artifact-dir` flag is unstable, and only available on the nightly channel of Cargo, but this is the `stable` channel
+See https://doc.rust-lang.org/book/appendix-07-nightly-rust.html for more information about Rust release channels.
+See https://github.com/rust-lang/cargo/issues/6790 for more information about the `--artifact-dir` flag.
 
 "#]])
         .run();
-    check_dir_contents(
-        &p.root().join("out"),
-        &["foo"],
-        &["foo", "foo.dSYM"],
-        &["foo.exe", "foo.pdb"],
-        &["foo.exe"],
-    );
 }
 
 fn check_dir_contents(

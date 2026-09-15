@@ -1,5 +1,6 @@
-use crate::command_prelude::*;
 use cargo::ops::{self, OutputMetadataOptions};
+
+use crate::command_prelude::*;
 
 pub fn cli() -> Command {
     subcommand("metadata")
@@ -10,8 +11,8 @@ pub fn cli() -> Command {
         )
         .arg(multi_opt(
             "filter-platform",
-            "TRIPLE",
-            "Only include resolve dependencies matching the given target-triple",
+            "TUPLE",
+            "Only include resolve dependencies matching the given target tuple",
         ))
         .arg(flag(
             "no-deps",
@@ -27,7 +28,7 @@ pub fn cli() -> Command {
         .arg_features()
         .arg_manifest_path()
         .after_help(color_print::cstr!(
-            "Run `<cyan,bold>cargo help metadata</>` for more detailed information.\n"
+            "Run `<bright-cyan,bold>cargo help metadata</>` for more detailed information.\n"
         ))
 }
 

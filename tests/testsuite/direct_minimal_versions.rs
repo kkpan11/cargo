@@ -2,7 +2,7 @@
 //!
 //! Note: Some tests are located in the resolver-tests package.
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::project;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
@@ -28,12 +28,13 @@ fn simple() {
         .file("src/main.rs", "fn main() {}")
         .build();
 
-    p.cargo("generate-lockfile -Zdirect-minimal-versions")
+    p.cargo("generate-lockfile")
+        .arg("-Zdirect-minimal-versions")
         .masquerade_as_nightly_cargo(&["direct-minimal-versions"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages
-[ADDING] dep v1.0.0 (latest: v1.1.0)
+[LOCKING] 1 package
+[ADDING] dep v1.0.0 (available: v1.1.0)
 
 "#]])
         .run();
@@ -46,7 +47,7 @@ fn simple() {
     );
     assert!(
         !lock.contains("1.1.0"),
-        "dep maximimal version cannot be present"
+        "dep maximal version cannot be present"
     );
 }
 
@@ -75,7 +76,8 @@ fn mixed_dependencies() {
         .file("src/main.rs", "fn main() {}")
         .build();
 
-    p.cargo("generate-lockfile -Zdirect-minimal-versions")
+    p.cargo("generate-lockfile")
+        .arg("-Zdirect-minimal-versions")
         .masquerade_as_nightly_cargo(&["direct-minimal-versions"])
         .with_status(101)
         .with_stderr_data(str![[r#"
@@ -84,7 +86,7 @@ fn mixed_dependencies() {
     ... required by package `foo v0.0.1 ([ROOT]/foo)`
 versions that meet the requirements `^1.1` are: 1.1.0
 
-all possible versions conflict with previously selected packages.
+all possible versions conflict with previously selected packages
 
   previously selected package `dep v1.0.0`
     ... which satisfies dependency `dep = "^1.0"` of package `foo v0.0.1 ([ROOT]/foo)`
@@ -117,12 +119,13 @@ fn yanked() {
         .file("src/main.rs", "fn main() {}")
         .build();
 
-    p.cargo("generate-lockfile -Zdirect-minimal-versions")
+    p.cargo("generate-lockfile")
+        .arg("-Zdirect-minimal-versions")
         .masquerade_as_nightly_cargo(&["direct-minimal-versions"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages
-[ADDING] dep v1.1.0 (latest: v1.2.0)
+[LOCKING] 1 package
+[ADDING] dep v1.1.0 (available: v1.2.0)
 
 "#]])
         .run();
@@ -139,7 +142,7 @@ fn yanked() {
     );
     assert!(
         !lock.contains("1.2.0"),
-        "dep maximimal version cannot be present"
+        "dep maximal version cannot be present"
     );
 }
 
@@ -171,12 +174,13 @@ fn indirect() {
         .file("src/main.rs", "fn main() {}")
         .build();
 
-    p.cargo("generate-lockfile -Zdirect-minimal-versions")
+    p.cargo("generate-lockfile")
+        .arg("-Zdirect-minimal-versions")
         .masquerade_as_nightly_cargo(&["direct-minimal-versions"])
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 3 packages
-[ADDING] direct v1.0.0 (latest: v1.1.0)
+[LOCKING] 2 packages
+[ADDING] direct v1.0.0 (available: v1.1.0)
 
 "#]])
         .run();
@@ -189,7 +193,7 @@ fn indirect() {
     );
     assert!(
         !lock.contains("1.1.0"),
-        "direct maximimal version cannot be present"
+        "direct maximal version cannot be present"
     );
     assert!(
         !lock.contains("2.0.0"),
@@ -234,7 +238,8 @@ fn indirect_conflict() {
         .file("src/main.rs", "fn main() {}")
         .build();
 
-    p.cargo("generate-lockfile -Zdirect-minimal-versions")
+    p.cargo("generate-lockfile")
+        .arg("-Zdirect-minimal-versions")
         .masquerade_as_nightly_cargo(&["direct-minimal-versions"])
         .with_status(101)
         .with_stderr_data(str![[r#"
@@ -244,7 +249,7 @@ fn indirect_conflict() {
     ... which satisfies dependency `direct = "^1.0"` of package `foo v0.0.1 ([ROOT]/foo)`
 versions that meet the requirements `^2.1` are: 2.2.0, 2.1.0
 
-all possible versions conflict with previously selected packages.
+all possible versions conflict with previously selected packages
 
   previously selected package `indirect v2.0.0`
     ... which satisfies dependency `indirect = "^2.0"` of package `foo v0.0.1 ([ROOT]/foo)`

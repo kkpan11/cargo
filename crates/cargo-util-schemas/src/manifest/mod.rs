@@ -7,6 +7,8 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+#[cfg(feature = "unstable-schema")]
+use std::collections::HashMap;
 use std::fmt::{self, Display, Write};
 use std::path::PathBuf;
 use std::str;
@@ -25,15 +27,21 @@ pub use crate::restricted_names::NameValidationError;
 pub use rust_version::RustVersion;
 pub use rust_version::RustVersionError;
 
+#[cfg(feature = "unstable-schema")]
+use crate::schema::TomlValueWrapper;
+
 /// This type is used to deserialize `Cargo.toml` files.
 #[derive(Default, Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlManifest {
-    // when adding new fields, be sure to check whether `requires_package` should disallow them
     pub cargo_features: Option<Vec<String>>,
+
+    // Update `requires_package` when adding new package-specific fields
     pub package: Option<Box<TomlPackage>>,
     pub project: Option<Box<TomlPackage>>,
-    pub profile: Option<TomlProfiles>,
+    pub badges: Option<BTreeMap<String, BTreeMap<String, String>>>,
+    pub features: Option<BTreeMap<FeatureName, FeatureDefinition>>,
     pub lib: Option<TomlLibTarget>,
     pub bin: Option<Vec<TomlBinTarget>>,
     pub example: Option<Vec<TomlExampleTarget>>,
@@ -46,13 +54,14 @@ pub struct TomlManifest {
     pub build_dependencies: Option<BTreeMap<PackageName, InheritableDependency>>,
     #[serde(rename = "build_dependencies")]
     pub build_dependencies2: Option<BTreeMap<PackageName, InheritableDependency>>,
-    pub features: Option<BTreeMap<FeatureName, Vec<String>>>,
     pub target: Option<BTreeMap<String, TomlPlatform>>,
-    pub replace: Option<BTreeMap<String, TomlDependency>>,
-    pub patch: Option<BTreeMap<String, BTreeMap<PackageName, TomlDependency>>>,
-    pub workspace: Option<TomlWorkspace>,
-    pub badges: Option<BTreeMap<String, BTreeMap<String, String>>>,
     pub lints: Option<InheritableLints>,
+    pub hints: Option<Hints>,
+
+    pub workspace: Option<TomlWorkspace>,
+    pub profile: Option<TomlProfiles>,
+    pub patch: Option<BTreeMap<String, BTreeMap<PackageName, TomlDependency>>>,
+    pub replace: Option<BTreeMap<String, TomlDependency>>,
 
     /// Report unused keys (see also nested `_unused_keys`)
     /// Note: this is populated by the caller, rather than automatically
@@ -63,6 +72,8 @@ pub struct TomlManifest {
 impl TomlManifest {
     pub fn requires_package(&self) -> impl Iterator<Item = &'static str> {
         [
+            self.badges.as_ref().map(|_| "badges"),
+            self.features.as_ref().map(|_| "features"),
             self.lib.as_ref().map(|_| "lib"),
             self.bin.as_ref().map(|_| "bin"),
             self.example.as_ref().map(|_| "example"),
@@ -73,10 +84,9 @@ impl TomlManifest {
             self.build_dependencies()
                 .as_ref()
                 .map(|_| "build-dependencies"),
-            self.features.as_ref().map(|_| "features"),
             self.target.as_ref().map(|_| "target"),
-            self.badges.as_ref().map(|_| "badges"),
             self.lints.as_ref().map(|_| "lints"),
+            self.hints.as_ref().map(|_| "hints"),
         ]
         .into_iter()
         .flatten()
@@ -102,22 +112,28 @@ impl TomlManifest {
             .or(self.build_dependencies2.as_ref())
     }
 
-    pub fn features(&self) -> Option<&BTreeMap<FeatureName, Vec<String>>> {
+    pub fn features(&self) -> Option<&BTreeMap<FeatureName, FeatureDefinition>> {
         self.features.as_ref()
     }
 
-    pub fn resolved_lints(&self) -> Result<Option<&TomlLints>, UnresolvedError> {
-        self.lints.as_ref().map(|l| l.resolved()).transpose()
+    pub fn normalized_lints(&self) -> Result<Option<&TomlLints>, UnresolvedError> {
+        self.lints.as_ref().map(|l| l.normalized()).transpose()
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlWorkspace {
     pub members: Option<Vec<String>>,
     pub exclude: Option<Vec<String>>,
     pub default_members: Option<Vec<String>>,
     pub resolver: Option<String>,
+
+    #[cfg_attr(
+        feature = "unstable-schema",
+        schemars(with = "Option<TomlValueWrapper>")
+    )]
     pub metadata: Option<toml::Value>,
 
     // Properties that can be inherited by members.
@@ -129,6 +145,7 @@ pub struct TomlWorkspace {
 /// A group of fields that are inheritable by members of the workspace
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct InheritablePackage {
     pub version: Option<semver::Version>,
     pub authors: Option<Vec<String>>,
@@ -146,6 +163,7 @@ pub struct InheritablePackage {
     pub badges: Option<BTreeMap<String, BTreeMap<String, String>>>,
     pub exclude: Option<Vec<String>>,
     pub include: Option<Vec<String>>,
+    #[cfg_attr(feature = "unstable-schema", schemars(with = "Option<String>"))]
     pub rust_version: Option<RustVersion>,
 }
 
@@ -155,15 +173,18 @@ pub struct InheritablePackage {
 /// are serialized to a TOML file. For example, you cannot have values after
 /// the field `metadata`, since it is a table and values cannot appear after
 /// tables.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlPackage {
     pub edition: Option<InheritableString>,
+    #[cfg_attr(feature = "unstable-schema", schemars(with = "Option<String>"))]
     pub rust_version: Option<InheritableRustVersion>,
-    pub name: PackageName,
+    #[cfg_attr(feature = "unstable-schema", schemars(with = "Option<String>"))]
+    pub name: Option<PackageName>,
     pub version: Option<InheritableSemverVersion>,
     pub authors: Option<InheritableVecString>,
-    pub build: Option<StringOrBool>,
+    pub build: Option<TomlPackageBuild>,
     pub metabuild: Option<StringOrVec>,
     pub default_target: Option<String>,
     pub forced_target: Option<String>,
@@ -173,6 +194,7 @@ pub struct TomlPackage {
     pub publish: Option<InheritableVecStringOrBool>,
     pub workspace: Option<String>,
     pub im_a_teapot: Option<bool>,
+    pub autolib: Option<bool>,
     pub autobins: Option<bool>,
     pub autoexamples: Option<bool>,
     pub autotests: Option<bool>,
@@ -191,99 +213,126 @@ pub struct TomlPackage {
     pub repository: Option<InheritableString>,
     pub resolver: Option<String>,
 
+    #[cfg_attr(
+        feature = "unstable-schema",
+        schemars(with = "Option<TomlValueWrapper>")
+    )]
     pub metadata: Option<toml::Value>,
 
     /// Provide a helpful error message for a common user error.
     #[serde(rename = "cargo-features", skip_serializing)]
+    #[cfg_attr(feature = "unstable-schema", schemars(skip))]
     pub _invalid_cargo_features: Option<InvalidCargoFeatures>,
 }
 
 impl TomlPackage {
-    pub fn resolved_edition(&self) -> Result<Option<&String>, UnresolvedError> {
-        self.edition.as_ref().map(|v| v.resolved()).transpose()
-    }
-
-    pub fn resolved_rust_version(&self) -> Result<Option<&RustVersion>, UnresolvedError> {
-        self.rust_version.as_ref().map(|v| v.resolved()).transpose()
-    }
-
-    pub fn resolved_version(&self) -> Result<Option<&semver::Version>, UnresolvedError> {
-        self.version.as_ref().map(|v| v.resolved()).transpose()
-    }
-
-    pub fn resolved_authors(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
-        self.authors.as_ref().map(|v| v.resolved()).transpose()
-    }
-
-    pub fn resolved_build(&self) -> Result<Option<&String>, UnresolvedError> {
-        let readme = self.build.as_ref().ok_or(UnresolvedError)?;
-        match readme {
-            StringOrBool::Bool(false) => Ok(None),
-            StringOrBool::Bool(true) => Err(UnresolvedError),
-            StringOrBool::String(value) => Ok(Some(value)),
+    pub fn new(name: PackageName) -> Self {
+        Self {
+            name: Some(name),
+            ..Default::default()
         }
     }
 
-    pub fn resolved_exclude(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
-        self.exclude.as_ref().map(|v| v.resolved()).transpose()
+    pub fn normalized_name(&self) -> Result<&PackageName, UnresolvedError> {
+        self.name.as_ref().ok_or(UnresolvedError)
     }
 
-    pub fn resolved_include(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
-        self.include.as_ref().map(|v| v.resolved()).transpose()
+    pub fn normalized_edition(&self) -> Result<Option<&String>, UnresolvedError> {
+        self.edition.as_ref().map(|v| v.normalized()).transpose()
     }
 
-    pub fn resolved_publish(&self) -> Result<Option<&VecStringOrBool>, UnresolvedError> {
-        self.publish.as_ref().map(|v| v.resolved()).transpose()
-    }
-
-    pub fn resolved_description(&self) -> Result<Option<&String>, UnresolvedError> {
-        self.description.as_ref().map(|v| v.resolved()).transpose()
-    }
-
-    pub fn resolved_homepage(&self) -> Result<Option<&String>, UnresolvedError> {
-        self.homepage.as_ref().map(|v| v.resolved()).transpose()
-    }
-
-    pub fn resolved_documentation(&self) -> Result<Option<&String>, UnresolvedError> {
-        self.documentation
+    pub fn normalized_rust_version(&self) -> Result<Option<&RustVersion>, UnresolvedError> {
+        self.rust_version
             .as_ref()
-            .map(|v| v.resolved())
+            .map(|v| v.normalized())
             .transpose()
     }
 
-    pub fn resolved_readme(&self) -> Result<Option<&String>, UnresolvedError> {
+    pub fn normalized_version(&self) -> Result<Option<&semver::Version>, UnresolvedError> {
+        self.version.as_ref().map(|v| v.normalized()).transpose()
+    }
+
+    pub fn normalized_authors(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
+        self.authors.as_ref().map(|v| v.normalized()).transpose()
+    }
+
+    pub fn normalized_build(&self) -> Result<Option<&[String]>, UnresolvedError> {
+        let build = self.build.as_ref().ok_or(UnresolvedError)?;
+        match build {
+            TomlPackageBuild::Auto(false) => Ok(None),
+            TomlPackageBuild::Auto(true) => Err(UnresolvedError),
+            TomlPackageBuild::SingleScript(value) => Ok(Some(std::slice::from_ref(value))),
+            TomlPackageBuild::MultipleScript(scripts) => Ok(Some(scripts)),
+        }
+    }
+
+    pub fn normalized_exclude(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
+        self.exclude.as_ref().map(|v| v.normalized()).transpose()
+    }
+
+    pub fn normalized_include(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
+        self.include.as_ref().map(|v| v.normalized()).transpose()
+    }
+
+    pub fn normalized_publish(&self) -> Result<Option<&VecStringOrBool>, UnresolvedError> {
+        self.publish.as_ref().map(|v| v.normalized()).transpose()
+    }
+
+    pub fn normalized_description(&self) -> Result<Option<&String>, UnresolvedError> {
+        self.description
+            .as_ref()
+            .map(|v| v.normalized())
+            .transpose()
+    }
+
+    pub fn normalized_homepage(&self) -> Result<Option<&String>, UnresolvedError> {
+        self.homepage.as_ref().map(|v| v.normalized()).transpose()
+    }
+
+    pub fn normalized_documentation(&self) -> Result<Option<&String>, UnresolvedError> {
+        self.documentation
+            .as_ref()
+            .map(|v| v.normalized())
+            .transpose()
+    }
+
+    pub fn normalized_readme(&self) -> Result<Option<&String>, UnresolvedError> {
         let readme = self.readme.as_ref().ok_or(UnresolvedError)?;
-        readme.resolved().and_then(|sb| match sb {
+        readme.normalized().and_then(|sb| match sb {
             StringOrBool::Bool(false) => Ok(None),
             StringOrBool::Bool(true) => Err(UnresolvedError),
             StringOrBool::String(value) => Ok(Some(value)),
         })
     }
 
-    pub fn resolved_keywords(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
-        self.keywords.as_ref().map(|v| v.resolved()).transpose()
+    pub fn normalized_keywords(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
+        self.keywords.as_ref().map(|v| v.normalized()).transpose()
     }
 
-    pub fn resolved_categories(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
-        self.categories.as_ref().map(|v| v.resolved()).transpose()
+    pub fn normalized_categories(&self) -> Result<Option<&Vec<String>>, UnresolvedError> {
+        self.categories.as_ref().map(|v| v.normalized()).transpose()
     }
 
-    pub fn resolved_license(&self) -> Result<Option<&String>, UnresolvedError> {
-        self.license.as_ref().map(|v| v.resolved()).transpose()
+    pub fn normalized_license(&self) -> Result<Option<&String>, UnresolvedError> {
+        self.license.as_ref().map(|v| v.normalized()).transpose()
     }
 
-    pub fn resolved_license_file(&self) -> Result<Option<&String>, UnresolvedError> {
-        self.license_file.as_ref().map(|v| v.resolved()).transpose()
+    pub fn normalized_license_file(&self) -> Result<Option<&String>, UnresolvedError> {
+        self.license_file
+            .as_ref()
+            .map(|v| v.normalized())
+            .transpose()
     }
 
-    pub fn resolved_repository(&self) -> Result<Option<&String>, UnresolvedError> {
-        self.repository.as_ref().map(|v| v.resolved()).transpose()
+    pub fn normalized_repository(&self) -> Result<Option<&String>, UnresolvedError> {
+        self.repository.as_ref().map(|v| v.normalized()).transpose()
     }
 }
 
 /// An enum that allows for inheriting keys from a workspace in a Cargo.toml.
 #[derive(Serialize, Copy, Clone, Debug)]
 #[serde(untagged)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub enum InheritableField<T> {
     /// The type that is used when not inheriting from a workspace.
     Value(T),
@@ -292,7 +341,7 @@ pub enum InheritableField<T> {
 }
 
 impl<T> InheritableField<T> {
-    pub fn resolved(&self) -> Result<&T, UnresolvedError> {
+    pub fn normalized(&self) -> Result<&T, UnresolvedError> {
         self.as_value().ok_or(UnresolvedError)
     }
 
@@ -301,6 +350,17 @@ impl<T> InheritableField<T> {
             InheritableField::Inherit(_) => None,
             InheritableField::Value(defined) => Some(defined),
         }
+    }
+
+    pub fn into_value(self) -> Option<T> {
+        match self {
+            Self::Inherit(_) => None,
+            Self::Value(defined) => Some(defined),
+        }
+    }
+
+    pub fn is_inherited(&self) -> bool {
+        matches!(self, Self::Inherit(_))
     }
 }
 
@@ -346,6 +406,13 @@ impl<'de> de::Deserialize<'de> for InheritableString {
                 Ok(InheritableString::Value(value))
             }
 
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_string(value.to_owned())
+            }
+
             fn visit_map<V>(self, map: V) -> Result<Self::Value, V::Error>
             where
                 V: de::MapAccess<'de>,
@@ -380,6 +447,13 @@ impl<'de> de::Deserialize<'de> for InheritableRustVersion {
             {
                 let value = value.parse::<RustVersion>().map_err(|e| E::custom(e))?;
                 Ok(InheritableRustVersion::Value(value))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_string(value.to_owned())
             }
 
             fn visit_map<V>(self, map: V) -> Result<Self::Value, V::Error>
@@ -461,6 +535,13 @@ impl<'de> de::Deserialize<'de> for InheritableStringOrBool {
                 StringOrBool::deserialize(string).map(InheritableField::Value)
             }
 
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                self.visit_string(value.to_owned())
+            }
+
             fn visit_map<V>(self, map: V) -> Result<Self::Value, V::Error>
             where
                 V: de::MapAccess<'de>,
@@ -539,6 +620,7 @@ impl<'de> de::Deserialize<'de> for InheritableBtreeMap {
 
 #[derive(Deserialize, Serialize, Copy, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlInheritedField {
     workspace: WorkspaceValue,
 }
@@ -560,6 +642,7 @@ impl Default for TomlInheritedField {
 #[derive(Deserialize, Serialize, Copy, Clone, Debug)]
 #[serde(try_from = "bool")]
 #[serde(into = "bool")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 struct WorkspaceValue;
 
 impl TryFrom<bool> for WorkspaceValue {
@@ -581,6 +664,7 @@ impl From<WorkspaceValue> for bool {
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(untagged)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub enum InheritableDependency {
     /// The type that is used when not inheriting from a workspace.
     Value(TomlDependency),
@@ -596,11 +680,15 @@ impl InheritableDependency {
         }
     }
 
-    pub fn resolved(&self) -> Result<&TomlDependency, UnresolvedError> {
+    pub fn normalized(&self) -> Result<&TomlDependency, UnresolvedError> {
         match self {
             InheritableDependency::Value(d) => Ok(d),
             InheritableDependency::Inherit(_) => Err(UnresolvedError),
         }
+    }
+
+    pub fn is_inherited(&self) -> bool {
+        matches!(self, InheritableDependency::Inherit(_))
     }
 }
 
@@ -628,6 +716,7 @@ impl<'de> de::Deserialize<'de> for InheritableDependency {
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlInheritedDependency {
     pub workspace: bool,
     pub features: Option<Vec<String>>,
@@ -640,6 +729,7 @@ pub struct TomlInheritedDependency {
     /// This is here to provide a way to see the "unused manifest keys" when deserializing
     #[serde(skip_serializing)]
     #[serde(flatten)]
+    #[cfg_attr(feature = "unstable-schema", schemars(skip))]
     pub _unused_keys: BTreeMap<String, toml::Value>,
 }
 
@@ -651,6 +741,7 @@ impl TomlInheritedDependency {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub enum TomlDependency<P: Clone = String> {
     /// In the simple format, only a version is specified, eg.
     /// `package = "<version>"`
@@ -703,12 +794,26 @@ impl<'de, P: Deserialize<'de> + Clone> de::Deserialize<'de> for TomlDependency<P
     where
         D: de::Deserializer<'de>,
     {
+        use serde::de::Error as _;
+        let expected = "a version string like \"0.9.8\" or a \
+                     detailed dependency like { version = \"0.9.8\" }";
         UntaggedEnumVisitor::new()
-            .expecting(
-                "a version string like \"0.9.8\" or a \
-                     detailed dependency like { version = \"0.9.8\" }",
-            )
+            .expecting(expected)
             .string(|value| Ok(TomlDependency::Simple(value.to_owned())))
+            .bool(|value| {
+                let expected = format!("invalid type: boolean `{value}`, expected {expected}");
+                let err = if value {
+                    format!(
+                        "{expected}\n\
+                    note: if you meant to use a workspace member, you can write\n \
+                      dep.workspace = {value}"
+                    )
+                } else {
+                    expected
+                };
+
+                Err(serde_untagged::de::Error::custom(err))
+            })
             .map(|value| value.deserialize().map(TomlDependency::Detailed))
             .deserialize(deserializer)
     }
@@ -716,8 +821,11 @@ impl<'de, P: Deserialize<'de> + Clone> de::Deserialize<'de> for TomlDependency<P
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlDetailedDependency<P: Clone = String> {
     pub version: Option<String>,
+
+    #[cfg_attr(feature = "unstable-schema", schemars(with = "Option<String>"))]
     pub registry: Option<RegistryName>,
     /// The URL of the `registry` field.
     /// This is an internal implementation detail. When Cargo creates a
@@ -729,6 +837,8 @@ pub struct TomlDetailedDependency<P: Clone = String> {
     // `path` is relative to the file it appears in. If that's a `Cargo.toml`, it'll be relative to
     // that TOML file, and if it's a `.cargo/config` file, it'll be relative to that file.
     pub path: Option<P>,
+    #[cfg_attr(feature = "unstable-schema", schemars(with = "Option<String>"))]
+    pub base: Option<PathBaseName>,
     pub git: Option<String>,
     pub branch: Option<String>,
     pub tag: Option<String>,
@@ -738,6 +848,7 @@ pub struct TomlDetailedDependency<P: Clone = String> {
     pub default_features: Option<bool>,
     #[serde(rename = "default_features")]
     pub default_features2: Option<bool>,
+    #[cfg_attr(feature = "unstable-schema", schemars(with = "Option<String>"))]
     pub package: Option<PackageName>,
     pub public: Option<bool>,
 
@@ -751,6 +862,7 @@ pub struct TomlDetailedDependency<P: Clone = String> {
     /// This is here to provide a way to see the "unused manifest keys" when deserializing
     #[serde(skip_serializing)]
     #[serde(flatten)]
+    #[cfg_attr(feature = "unstable-schema", schemars(skip))]
     pub _unused_keys: BTreeMap<String, toml::Value>,
 }
 
@@ -768,6 +880,7 @@ impl<P: Clone> Default for TomlDetailedDependency<P> {
             registry: Default::default(),
             registry_index: Default::default(),
             path: Default::default(),
+            base: Default::default(),
             git: Default::default(),
             branch: Default::default(),
             tag: Default::default(),
@@ -787,6 +900,7 @@ impl<P: Clone> Default for TomlDetailedDependency<P> {
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlProfiles(pub BTreeMap<ProfileName, TomlProfile>);
 
 impl TomlProfiles {
@@ -801,6 +915,7 @@ impl TomlProfiles {
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default, Eq, PartialEq)]
 #[serde(default, rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlProfile {
     pub opt_level: Option<TomlOptLevel>,
     pub lto: Option<StringOrBool>,
@@ -824,6 +939,8 @@ pub struct TomlProfile {
     pub build_override: Option<Box<TomlProfile>>,
     /// Unstable feature `-Ztrim-paths`.
     pub trim_paths: Option<TomlTrimPaths>,
+    /// Unstable feature `hint-mostly-unused`
+    pub hint_mostly_unused: Option<bool>,
 }
 
 impl TomlProfile {
@@ -915,10 +1032,15 @@ impl TomlProfile {
         if let Some(v) = &profile.trim_paths {
             self.trim_paths = Some(v.clone())
         }
+
+        if let Some(v) = profile.hint_mostly_unused {
+            self.hint_mostly_unused = Some(v);
+        }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub enum ProfilePackageSpec {
     Spec(PackageIdSpec),
     All,
@@ -959,6 +1081,7 @@ impl<'de> de::Deserialize<'de> for ProfilePackageSpec {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlOptLevel(pub String);
 
 impl ser::Serialize for TomlOptLevel {
@@ -998,12 +1121,39 @@ impl<'de> de::Deserialize<'de> for TomlOptLevel {
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
+#[cfg_attr(feature = "unstable-schema", schemars(rename_all = "kebab-case"))]
+#[cfg_attr(feature = "unstable-schema", schemars(transform = Self::schema_add_aliases))]
 pub enum TomlDebugInfo {
     None,
     LineDirectivesOnly,
     LineTablesOnly,
     Limited,
     Full,
+}
+
+#[cfg(feature = "unstable-schema")]
+impl TomlDebugInfo {
+    fn schema_add_aliases(schema: &mut schemars::Schema) {
+        use serde_json::Value;
+
+        if let Some(obj) = schema.as_object_mut() {
+            obj.get_mut("type").map(|v| match v {
+                Value::Array(v) => v.extend_from_slice(&["integer".into(), "boolean".into()]),
+                Value::String(s) => {
+                    let s = std::mem::replace(s, String::with_capacity(0));
+                    *v = Value::Array(vec![s.into(), "integer".into(), "boolean".into()])
+                }
+                _ => *v = Value::Array(vec!["string".into(), "integer".into(), "boolean".into()]),
+            });
+
+            if let Some(variants) = obj.get_mut("enum").and_then(|v| v.as_array_mut()) {
+                variants.reserve(5);
+                variants.extend((0..=2).map(Into::into));
+                variants.extend_from_slice(&[false.into(), true.into()]);
+            }
+        }
+    }
 }
 
 impl Display for TomlDebugInfo {
@@ -1039,7 +1189,7 @@ impl<'de> de::Deserialize<'de> for TomlDebugInfo {
         D: de::Deserializer<'de>,
     {
         use serde::de::Error as _;
-        let expecting = "a boolean, 0, 1, 2, \"line-tables-only\", or \"line-directives-only\"";
+        let expecting = "a boolean, 0, 1, 2, \"none\", \"limited\", \"full\", \"line-tables-only\", or \"line-directives-only\"";
         UntaggedEnumVisitor::new()
             .expecting(expecting)
             .bool(|value| {
@@ -1058,7 +1208,7 @@ impl<'de> de::Deserialize<'de> for TomlDebugInfo {
                         return Err(serde_untagged::de::Error::invalid_value(
                             Unexpected::Signed(value),
                             &expecting,
-                        ))
+                        ));
                     }
                 };
                 Ok(debuginfo)
@@ -1074,7 +1224,7 @@ impl<'de> de::Deserialize<'de> for TomlDebugInfo {
                         return Err(serde_untagged::de::Error::invalid_value(
                             Unexpected::Str(value),
                             &expecting,
-                        ))
+                        ));
                     }
                 };
                 Ok(debuginfo)
@@ -1083,117 +1233,30 @@ impl<'de> de::Deserialize<'de> for TomlDebugInfo {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize)]
-#[serde(untagged, rename_all = "kebab-case")]
+#[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub enum TomlTrimPaths {
-    Values(Vec<TomlTrimPathsValue>),
+    None,
+    Object,
     All,
 }
 
 impl TomlTrimPaths {
-    pub fn none() -> Self {
-        TomlTrimPaths::Values(Vec::new())
-    }
-
     pub fn is_none(&self) -> bool {
-        match self {
-            TomlTrimPaths::Values(v) => v.is_empty(),
-            TomlTrimPaths::All => false,
-        }
+        matches!(self, TomlTrimPaths::None)
     }
-}
 
-impl<'de> de::Deserialize<'de> for TomlTrimPaths {
-    fn deserialize<D>(d: D) -> Result<TomlTrimPaths, D::Error>
-    where
-        D: de::Deserializer<'de>,
-    {
-        use serde::de::Error as _;
-        let expecting = r#"a boolean, "none", "diagnostics", "macro", "object", "all", or an array with these options"#;
-        UntaggedEnumVisitor::new()
-            .expecting(expecting)
-            .bool(|value| {
-                Ok(if value {
-                    TomlTrimPaths::All
-                } else {
-                    TomlTrimPaths::none()
-                })
-            })
-            .string(|v| match v {
-                "none" => Ok(TomlTrimPaths::none()),
-                "all" => Ok(TomlTrimPaths::All),
-                v => {
-                    let d = v.into_deserializer();
-                    let err = |_: D::Error| {
-                        serde_untagged::de::Error::custom(format!("expected {expecting}"))
-                    };
-                    TomlTrimPathsValue::deserialize(d)
-                        .map_err(err)
-                        .map(|v| v.into())
-                }
-            })
-            .seq(|seq| {
-                let seq: Vec<String> = seq.deserialize()?;
-                let seq: Vec<_> = seq
-                    .into_iter()
-                    .map(|s| TomlTrimPathsValue::deserialize(s.into_deserializer()))
-                    .collect::<Result<_, _>>()?;
-                Ok(seq.into())
-            })
-            .deserialize(d)
+    fn as_str(&self) -> &'static str {
+        match self {
+            TomlTrimPaths::None => "none",
+            TomlTrimPaths::Object => "object",
+            TomlTrimPaths::All => "all",
+        }
     }
 }
 
 impl fmt::Display for TomlTrimPaths {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TomlTrimPaths::All => write!(f, "all"),
-            TomlTrimPaths::Values(v) if v.is_empty() => write!(f, "none"),
-            TomlTrimPaths::Values(v) => {
-                let mut iter = v.iter();
-                if let Some(value) = iter.next() {
-                    write!(f, "{value}")?;
-                }
-                for value in iter {
-                    write!(f, ",{value}")?;
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
-impl From<TomlTrimPathsValue> for TomlTrimPaths {
-    fn from(value: TomlTrimPathsValue) -> Self {
-        TomlTrimPaths::Values(vec![value])
-    }
-}
-
-impl From<Vec<TomlTrimPathsValue>> for TomlTrimPaths {
-    fn from(value: Vec<TomlTrimPathsValue>) -> Self {
-        TomlTrimPaths::Values(value)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum TomlTrimPathsValue {
-    Diagnostics,
-    Macro,
-    Object,
-}
-
-impl TomlTrimPathsValue {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TomlTrimPathsValue::Diagnostics => "diagnostics",
-            TomlTrimPathsValue::Macro => "macro",
-            TomlTrimPathsValue::Object => "object",
-        }
-    }
-}
-
-impl fmt::Display for TomlTrimPathsValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.as_str())
     }
@@ -1207,6 +1270,7 @@ pub type TomlBenchTarget = TomlTarget;
 
 #[derive(Default, Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlTarget {
     pub name: Option<String>,
 
@@ -1216,6 +1280,7 @@ pub struct TomlTarget {
     #[serde(rename = "crate_type")]
     pub crate_type2: Option<Vec<String>>,
 
+    #[cfg_attr(feature = "unstable-schema", schemars(with = "Option<String>"))]
     pub path: Option<PathValue>,
     // Note that `filename` is used for the cargo-feature `different_binary_name`
     pub filename: Option<String>,
@@ -1260,6 +1325,7 @@ macro_rules! str_newtype {
         /// Verified string newtype
         #[derive(Serialize, Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
         #[serde(transparent)]
+        #[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
         pub struct $name<T: AsRef<str> = String>(T);
 
         impl<T: AsRef<str>> $name<T> {
@@ -1366,9 +1432,20 @@ impl<T: AsRef<str>> FeatureName<T> {
     }
 }
 
+str_newtype!(PathBaseName);
+
+impl<T: AsRef<str>> PathBaseName<T> {
+    /// Validated path base name
+    pub fn new(name: T) -> Result<Self, NameValidationError> {
+        restricted_names::validate_path_base_name(name.as_ref())?;
+        Ok(Self(name))
+    }
+}
+
 /// Corresponds to a `target` entry, but `TomlTarget` is already used.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlPlatform {
     pub dependencies: Option<BTreeMap<PackageName, InheritableDependency>>,
     pub build_dependencies: Option<BTreeMap<PackageName, InheritableDependency>>,
@@ -1393,26 +1470,84 @@ impl TomlPlatform {
     }
 }
 
+/// Definition of a feature.
+#[derive(Clone, Debug, Serialize)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
+#[serde(untagged)]
+pub enum FeatureDefinition {
+    /// Features that this feature enables.
+    Array(Vec<String>),
+    /// Unstable feature `feature-metadata`. Metadata of this feature.
+    Metadata(FeatureMetadata),
+}
+
+// Implementing `Deserialize` manually allows for a better error message when the `enables` key is
+// missing.
+impl<'de> de::Deserialize<'de> for FeatureDefinition {
+    fn deserialize<D>(d: D) -> Result<FeatureDefinition, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        UntaggedEnumVisitor::new()
+            .seq(|seq| {
+                seq.deserialize::<Vec<String>>()
+                    .map(FeatureDefinition::Array)
+            })
+            .map(|seq| {
+                seq.deserialize::<FeatureMetadata>()
+                    .map(FeatureDefinition::Metadata)
+            })
+            .deserialize(d)
+    }
+}
+
+impl FeatureDefinition {
+    /// Returns the features that this feature enables.
+    pub fn enables(&self) -> &[String] {
+        match self {
+            Self::Array(features) => features,
+            Self::Metadata(FeatureMetadata {
+                enables: features, ..
+            }) => features,
+        }
+    }
+}
+
+/// Unstable feature `feature-metadata`. Metadata of a feature.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
+pub struct FeatureMetadata {
+    /// Features that this feature enables.
+    pub enables: Vec<String>,
+
+    /// Documentation for the feature.
+    pub doc: Option<String>,
+
+    /// This is here to provide a way to see the "unused manifest keys" when deserializing
+    #[serde(skip_serializing)]
+    #[serde(flatten)]
+    #[cfg_attr(feature = "unstable-schema", schemars(skip))]
+    pub _unused_keys: BTreeMap<String, toml::Value>,
+}
+
 #[derive(Serialize, Debug, Clone)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct InheritableLints {
-    #[serde(skip_serializing_if = "is_false")]
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    #[cfg_attr(feature = "unstable-schema", schemars(default))]
     pub workspace: bool,
     #[serde(flatten)]
     pub lints: TomlLints,
 }
 
 impl InheritableLints {
-    pub fn resolved(&self) -> Result<&TomlLints, UnresolvedError> {
+    pub fn normalized(&self) -> Result<&TomlLints, UnresolvedError> {
         if self.workspace {
             Err(UnresolvedError)
         } else {
             Ok(&self.lints)
         }
     }
-}
-
-fn is_false(b: &bool) -> bool {
-    !b
 }
 
 impl<'de> Deserialize<'de> for InheritableLints {
@@ -1469,6 +1604,7 @@ pub type TomlToolLints = BTreeMap<String, TomlLint>;
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(untagged)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub enum TomlLint {
     Level(TomlLintLevel),
     Config(TomlLintConfig),
@@ -1513,21 +1649,38 @@ impl TomlLint {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct TomlLintConfig {
     pub level: TomlLintLevel,
     #[serde(default)]
     pub priority: i8,
     #[serde(flatten)]
+    #[cfg_attr(
+        feature = "unstable-schema",
+        schemars(with = "HashMap<String, TomlValueWrapper>")
+    )]
     pub config: toml::Table,
 }
 
 #[derive(Serialize, Deserialize, Debug, Copy, Clone, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub enum TomlLintLevel {
     Forbid,
     Deny,
     Warn,
     Allow,
+}
+
+#[derive(Serialize, Deserialize, Debug, Default, Clone)]
+#[serde(rename_all = "kebab-case")]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
+pub struct Hints {
+    #[cfg_attr(
+        feature = "unstable-schema",
+        schemars(with = "Option<TomlValueWrapper>")
+    )]
+    pub mostly_unused: Option<toml::Value>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -1546,9 +1699,10 @@ impl<'de> de::Deserialize<'de> for InvalidCargoFeatures {
     }
 }
 
-/// A StringOrVec can be parsed from either a TOML string or array,
+/// This can be parsed from either a TOML string or array,
 /// but is always stored as a vector.
 #[derive(Clone, Debug, Serialize, Eq, PartialEq, PartialOrd, Ord)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct StringOrVec(pub Vec<String>);
 
 impl StringOrVec {
@@ -1572,6 +1726,7 @@ impl<'de> de::Deserialize<'de> for StringOrVec {
 
 #[derive(Clone, Debug, Serialize, Eq, PartialEq)]
 #[serde(untagged)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub enum StringOrBool {
     String(String),
     Bool(bool),
@@ -1589,8 +1744,37 @@ impl<'de> Deserialize<'de> for StringOrBool {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Eq, PartialEq)]
+#[serde(untagged)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
+pub enum TomlPackageBuild {
+    /// If build scripts are disabled or enabled.
+    /// If true, `build.rs` in the root folder will be the build script.
+    Auto(bool),
+
+    /// Path of Build Script if there's just one script.
+    SingleScript(String),
+
+    /// Vector of paths if multiple build script are to be used.
+    MultipleScript(Vec<String>),
+}
+
+impl<'de> Deserialize<'de> for TomlPackageBuild {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: de::Deserializer<'de>,
+    {
+        UntaggedEnumVisitor::new()
+            .bool(|b| Ok(TomlPackageBuild::Auto(b)))
+            .string(|s| Ok(TomlPackageBuild::SingleScript(s.to_owned())))
+            .seq(|value| value.deserialize().map(TomlPackageBuild::MultipleScript))
+            .deserialize(deserializer)
+    }
+}
+
 #[derive(PartialEq, Clone, Debug, Serialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub enum VecStringOrBool {
     VecString(Vec<String>),
     Bool(bool),
@@ -1609,7 +1793,7 @@ impl<'de> de::Deserialize<'de> for VecStringOrBool {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct PathValue(pub PathBuf);
 
 impl fmt::Debug for PathValue {
@@ -1640,4 +1824,13 @@ impl<'de> de::Deserialize<'de> for PathValue {
 #[derive(Debug, thiserror::Error)]
 #[error("manifest field was not resolved")]
 #[non_exhaustive]
+#[cfg_attr(feature = "unstable-schema", derive(schemars::JsonSchema))]
 pub struct UnresolvedError;
+
+#[cfg(feature = "unstable-schema")]
+#[test]
+fn dump_manifest_schema() {
+    let schema = schemars::schema_for!(crate::manifest::TomlManifest);
+    let dump = serde_json::to_string_pretty(&schema).unwrap();
+    snapbox::assert_data_eq!(dump, snapbox::file!("../../manifest.schema.json").raw());
+}

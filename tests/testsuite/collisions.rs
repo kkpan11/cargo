@@ -1,9 +1,10 @@
 //! Tests for when multiple artifacts have the same output filename.
-//! See https://github.com/rust-lang/cargo/issues/6313 for more details.
+//! See <https://github.com/rust-lang/cargo/issues/6313> for more details.
 //! Ideally these should never happen, but I don't think we'll ever be able to
 //! prevent all collisions.
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
+use crate::utils::cross_compile::disabled as cross_compile_disabled;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
 use cargo_test_support::{basic_manifest, cross_compile, project};
@@ -54,12 +55,11 @@ fn collision_dylib() {
     p.cargo("build -j=1")
         .with_stderr_data(&format!("\
 ...
-[WARNING] output filename collision.
-The lib target `a` in package `b v1.0.0 ([ROOT]/foo/b)` has the same output filename as the lib target `a` in package `a v1.0.0 ([ROOT]/foo/a)`.
-Colliding filename is: [ROOT]/foo/target/debug/deps/{}a{}
-The targets should have unique names.
-Consider changing their names to be unique or compiling them separately.
-This may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] output filename collision at [ROOT]/foo/target/debug/{}a{}
+  |
+  = [NOTE] the lib target `a` in package `b v1.0.0 ([ROOT]/foo/b)` has the same output filename as the lib target `a` in package `a v1.0.0 ([ROOT]/foo/a)`
+  = [NOTE] this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = [HELP] consider changing their names to be unique or compiling them separately
 ...
 ", env::consts::DLL_PREFIX, env::consts::DLL_SUFFIX))
         .run();
@@ -87,12 +87,11 @@ fn collision_example() {
     p.cargo("build --examples -j=1")
         .with_stderr_data(str![[r#"
 ...
-[WARNING] output filename collision.
-The example target `ex1` in package `b v1.0.0 ([ROOT]/foo/b)` has the same output filename as the example target `ex1` in package `a v1.0.0 ([ROOT]/foo/a)`.
-Colliding filename is: [ROOT]/foo/target/debug/examples/ex1[EXE]
-The targets should have unique names.
-Consider changing their names to be unique or compiling them separately.
-This may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] output filename collision at [ROOT]/foo/target/debug/examples/ex1[EXE]
+  |
+  = [NOTE] the example target `ex1` in package `b v1.0.0 ([ROOT]/foo/b)` has the same output filename as the example target `ex1` in package `a v1.0.0 ([ROOT]/foo/a)`
+  = [NOTE] this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = [HELP] consider changing their names to be unique or compiling them separately
 ...
 
 "#]])
@@ -115,15 +114,15 @@ fn collision_export() {
 
     // -j1 to avoid issues with two processes writing to the same file at the
     // same time.
-    p.cargo("build -j1 --artifact-dir=out -Z unstable-options --bins --examples")
+    p.cargo("build -j1 --artifact-dir=out --bins --examples")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["artifact-dir"])
         .with_stderr_data(str![[r#"
-[WARNING] `--artifact-dir` filename collision.
-The example target `foo` in package `foo v1.0.0 ([ROOT]/foo)` has the same output filename as the bin target `foo` in package `foo v1.0.0 ([ROOT]/foo)`.
-Colliding filename is: [ROOT]/foo/out/foo[EXE]
-The exported filenames should be unique.
-Consider changing their names to be unique or compiling them separately.
-This may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] `--artifact-dir` filename collision at [ROOT]/foo/out/foo[EXE]
+  |
+  = [NOTE] the example target `foo` in package `foo v1.0.0 ([ROOT]/foo)` has the same output filename as the bin target `foo` in package `foo v1.0.0 ([ROOT]/foo)`
+  = [NOTE] this may become a hard error in the future; see <https://github.com/rust-lang/cargo/issues/6313>
+  = [HELP] consider changing their names to be unique or compiling them separately
 ...
 
 "#]])
@@ -164,12 +163,10 @@ fn collision_doc() {
     p.cargo("doc -j=1")
         .with_stderr_data(str![[r#"
 ...
-[WARNING] output filename collision.
-The lib target `foo` in package `foo2 v0.1.0 ([ROOT]/foo/foo2)` has the same output filename as the lib target `foo` in package `foo v0.1.0 ([ROOT]/foo)`.
-Colliding filename is: [ROOT]/foo/target/doc/foo/index.html
-The targets should have unique names.
-This is a known bug where multiple crates with the same name use
-the same path; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] output filename collision at [ROOT]/foo/target/doc/foo/index.html
+  |
+  = [NOTE] the lib target `foo` in package `foo2 v0.1.0 ([ROOT]/foo/foo2)` has the same output filename as the lib target `foo` in package `foo v0.1.0 ([ROOT]/foo)`
+  = [NOTE] this is a known bug where multiple crates with the same name use the same path; see <https://github.com/rust-lang/cargo/issues/6313>
 ...
 
 "#]])
@@ -206,8 +203,8 @@ fn collision_doc_multiple_versions() {
         .with_stderr_data(
             str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 4 packages to latest compatible versions
-[ADDING] bar v1.0.0 (latest: v2.0.0)
+[LOCKING] 3 packages to highest compatible versions
+[ADDING] bar v1.0.0 (available: v2.0.0)
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v2.0.0 (registry `dummy-registry`)
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
@@ -226,7 +223,6 @@ fn collision_doc_multiple_versions() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn collision_doc_host_target_feature_split() {
     // Same dependency built twice due to different features.
@@ -328,10 +324,11 @@ fn collision_doc_host_target_feature_split() {
         .run();
 
     assert!(p.build_dir().join("doc/common_dep/fn.f.html").exists());
-    assert!(!p
-        .build_dir()
-        .join("doc/common_dep/fn.bdep_func.html")
-        .exists());
+    assert!(
+        !p.build_dir()
+            .join("doc/common_dep/fn.bdep_func.html")
+            .exists()
+    );
     assert!(p.build_dir().join("doc/common/fn.f.html").exists());
     assert!(p.build_dir().join("doc/pm/macro.pm.html").exists());
     assert!(p.build_dir().join("doc/foo/fn.f.html").exists());
@@ -356,6 +353,9 @@ fn collision_doc_profile_split() {
 
                 [profile.dev]
                 opt-level = 2
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -372,6 +372,9 @@ fn collision_doc_profile_split() {
 
                 [lib]
                 proc-macro = true
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("pm/src/lib.rs", "")
@@ -384,7 +387,7 @@ fn collision_doc_profile_split() {
         .with_stderr_data(
             str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [DOWNLOADING] crates ...
 [DOWNLOADED] common v1.0.0 (registry `dummy-registry`)
 [COMPILING] common v1.0.0
@@ -445,15 +448,13 @@ fn collision_doc_sources() {
         .with_stderr_data(
             str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
-[WARNING] output filename collision.
-The lib target `bar` in package `bar v1.0.0` has the same output filename as the lib target `bar` in package `bar v1.0.0 ([ROOT]/foo/bar)`.
-Colliding filename is: [ROOT]/foo/target/doc/bar/index.html
-The targets should have unique names.
-This is a known bug where multiple crates with the same name use
-the same path; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] output filename collision at [ROOT]/foo/target/doc/bar/index.html
+  |
+  = [NOTE] the lib target `bar` in package `bar v1.0.0` has the same output filename as the lib target `bar` in package `bar v1.0.0 ([ROOT]/foo/bar)`
+  = [NOTE] this is a known bug where multiple crates with the same name use the same path; see <https://github.com/rust-lang/cargo/issues/6313>
 [CHECKING] bar v1.0.0 ([ROOT]/foo/bar)
 [DOCUMENTING] bar v1.0.0 ([ROOT]/foo/bar)
 [DOCUMENTING] bar v1.0.0
@@ -471,7 +472,7 @@ the same path; see <https://github.com/rust-lang/cargo/issues/6313>.
 #[cargo_test]
 fn collision_doc_target() {
     // collision in doc with --target, doesn't fail due to orphans
-    if cross_compile::disabled() {
+    if cross_compile_disabled() {
         return;
     }
 
@@ -502,8 +503,8 @@ fn collision_doc_target() {
         .with_stderr_data(
             str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 4 packages to latest compatible versions
-[ADDING] bar v1.0.0 (latest: v2.0.0)
+[LOCKING] 3 packages to highest compatible versions
+[ADDING] bar v1.0.0 (available: v2.0.0)
 [DOWNLOADING] crates ...
 [DOWNLOADED] orphaned v1.0.0 (registry `dummy-registry`)
 [DOWNLOADED] bar v2.0.0 (registry `dummy-registry`)
@@ -572,15 +573,13 @@ fn collision_with_root() {
     p.cargo("doc -j=1")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] foo-macro v1.0.0 (registry `dummy-registry`)
-[WARNING] output filename collision.
-The lib target `foo_macro` in package `foo-macro v1.0.0` has the same output filename as the lib target `foo_macro` in package `foo-macro v1.0.0 ([ROOT]/foo/foo-macro)`.
-Colliding filename is: [ROOT]/foo/target/doc/foo_macro/index.html
-The targets should have unique names.
-This is a known bug where multiple crates with the same name use
-the same path; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] output filename collision at [ROOT]/foo/target/doc/foo_macro/index.html
+  |
+  = [NOTE] the lib target `foo_macro` in package `foo-macro v1.0.0` has the same output filename as the lib target `foo_macro` in package `foo-macro v1.0.0 ([ROOT]/foo/foo-macro)`
+  = [NOTE] this is a known bug where multiple crates with the same name use the same path; see <https://github.com/rust-lang/cargo/issues/6313>
 [CHECKING] foo-macro v1.0.0
 [DOCUMENTING] foo-macro v1.0.0
 [CHECKING] abc v1.0.0 ([ROOT]/foo/abc)

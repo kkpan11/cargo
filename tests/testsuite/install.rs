@@ -7,21 +7,19 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::thread;
 
+use crate::prelude::*;
+use crate::utils::cargo_process;
 use cargo_test_support::compare::assert_e2e;
 use cargo_test_support::cross_compile;
 use cargo_test_support::git;
-use cargo_test_support::prelude::*;
 use cargo_test_support::registry::{self, Package};
 use cargo_test_support::str;
-use cargo_test_support::{
-    basic_manifest, cargo_process, project, project_in, symlink_supported, t,
-};
+use cargo_test_support::{basic_manifest, project, project_in, symlink_supported, t};
 use cargo_util::{ProcessBuilder, ProcessError};
 
-use cargo_test_support::install::{
-    assert_has_installed_exe, assert_has_not_installed_exe, cargo_home, exe,
-};
-use cargo_test_support::paths::{self, CargoPathExt};
+use crate::utils::cross_compile::disabled as cross_compile_disabled;
+use cargo_test_support::install::{assert_has_installed_exe, assert_has_not_installed_exe, exe};
+use cargo_test_support::paths::{self, cargo_home};
 
 fn pkg(name: &str, vers: &str) {
     Package::new(name, vers)
@@ -49,7 +47,7 @@ fn simple() {
 [WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
 
 "#]]).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 
     cargo_process("uninstall foo")
         .with_stderr_data(str![[r#"
@@ -57,7 +55,7 @@ fn simple() {
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -78,7 +76,7 @@ fn install_the_same_version_twice() {
 
 "#]])
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -108,7 +106,6 @@ fn url() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn simple_with_message_format() {
     pkg("foo", "0.0.1");
@@ -126,63 +123,68 @@ fn simple_with_message_format() {
 [WARNING] be sure to add `[..]` to your PATH to be able to run the installed binaries
 
 "#]])
-        .with_json(
-            r#"
-            {
-                "reason": "compiler-artifact",
-                "package_id": "registry+https://[..]#foo@0.0.1",
-                "manifest_path": "[..]",
-                "target": {
-                    "kind": [
-                        "lib"
-                    ],
-                    "crate_types": [
-                        "lib"
-                    ],
-                    "name": "foo",
-                    "src_path": "[..]/foo-0.0.1/src/lib.rs",
-                    "edition": "2015",
-                    "doc": true,
-                    "doctest": true,
-                    "test": true
-                },
-                "profile": "{...}",
-                "features": [],
-                "filenames": "{...}",
-                "executable": null,
-                "fresh": false
-            }
-
-            {
-                "reason": "compiler-artifact",
-                "package_id": "registry+https://[..]#foo@0.0.1",
-                "manifest_path": "[..]",
-                "target": {
-                    "kind": [
-                        "bin"
-                    ],
-                    "crate_types": [
-                        "bin"
-                    ],
-                    "name": "foo",
-                    "src_path": "[..]/foo-0.0.1/src/main.rs",
-                    "edition": "2015",
-                    "doc": true,
-                    "doctest": false,
-                    "test": true
-                },
-                "profile": "{...}",
-                "features": [],
-                "filenames": "{...}",
-                "executable": "[..]",
-                "fresh": false
-            }
-
-            {"reason":"build-finished","success":true}
-            "#,
+        .with_stdout_data(
+            str![[r#"
+[
+  {
+    "executable": null,
+    "features": [],
+    "filenames": "{...}",
+    "fresh": false,
+    "manifest_path": "[ROOT]/home/.cargo/registry/src/-[HASH]/foo-0.0.1/Cargo.toml",
+    "package_id": "registry+https://github.com/rust-lang/crates.io-index#foo@0.0.1",
+    "profile": "{...}",
+    "reason": "compiler-artifact",
+    "target": {
+      "crate_types": [
+        "lib"
+      ],
+      "doc": true,
+      "doctest": true,
+      "edition": "2015",
+      "kind": [
+        "lib"
+      ],
+      "name": "foo",
+      "src_path": "[ROOT]/home/.cargo/registry/src/-[HASH]/foo-0.0.1/src/lib.rs",
+      "test": true
+    }
+  },
+  {
+    "executable": "[..]",
+    "features": [],
+    "filenames": "{...}",
+    "fresh": false,
+    "manifest_path": "[ROOT]/home/.cargo/registry/src/-[HASH]/foo-0.0.1/Cargo.toml",
+    "package_id": "registry+https://github.com/rust-lang/crates.io-index#foo@0.0.1",
+    "profile": "{...}",
+    "reason": "compiler-artifact",
+    "target": {
+      "crate_types": [
+        "bin"
+      ],
+      "doc": true,
+      "doctest": false,
+      "edition": "2015",
+      "kind": [
+        "bin"
+      ],
+      "name": "foo",
+      "src_path": "[ROOT]/home/.cargo/registry/src/-[HASH]/foo-0.0.1/src/main.rs",
+      "test": true
+    }
+  },
+  {
+    "reason": "build-finished",
+    "success": true
+  }
+]
+"#]]
+            .is_json()
+            .against_jsonlines(),
         )
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -205,7 +207,7 @@ fn with_index() {
 
 "#]])
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 
     cargo_process("uninstall foo")
         .with_stderr_data(str![[r#"
@@ -213,7 +215,7 @@ fn with_index() {
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -246,8 +248,8 @@ fn multiple_pkgs() {
 
 "#]])
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
-    assert_has_installed_exe(cargo_home(), "bar");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "bar");
 
     cargo_process("uninstall foo bar")
         .with_stderr_data(str![[r#"
@@ -258,8 +260,8 @@ fn multiple_pkgs() {
 "#]])
         .run();
 
-    assert_has_not_installed_exe(cargo_home(), "foo");
-    assert_has_not_installed_exe(cargo_home(), "bar");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "bar");
 }
 
 fn path() -> Vec<PathBuf> {
@@ -276,7 +278,7 @@ fn multiple_pkgs_path_set() {
 
     // add CARGO_HOME/bin to path
     let mut path = path();
-    path.push(cargo_home().join("bin"));
+    path.push(paths::cargo_home().join("bin"));
     let new_path = env::join_paths(path).unwrap();
     cargo_process("install foo bar baz")
         .env("PATH", new_path)
@@ -303,8 +305,8 @@ fn multiple_pkgs_path_set() {
 
 "#]])
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
-    assert_has_installed_exe(cargo_home(), "bar");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "bar");
 
     cargo_process("uninstall foo bar")
         .with_stderr_data(str![[r#"
@@ -315,8 +317,8 @@ fn multiple_pkgs_path_set() {
 "#]])
         .run();
 
-    assert_has_not_installed_exe(cargo_home(), "foo");
-    assert_has_not_installed_exe(cargo_home(), "bar");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "bar");
 }
 
 #[cargo_test]
@@ -339,7 +341,7 @@ fn pick_max_version() {
 [WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
 
 "#]]).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -353,7 +355,7 @@ fn installs_beta_version_by_explicit_name_from_git() {
         .arg(p.url().to_string())
         .arg("foo")
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -374,8 +376,8 @@ fn missing_current_working_directory() {
     cargo_process("install .")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] To install the binaries for the package in current working directory use `cargo install --path .`. 
-Use `cargo build` if you want to simply build the package.
+[ERROR] to install the binaries for the package in current working directory use `cargo install --path .`. 
+use `cargo build` if you want to simply build the package.
 
 "#]])
         .run();
@@ -389,6 +391,20 @@ fn bad_version() {
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
 [ERROR] could not find `foo` in registry `crates-io` with version `=0.2.0`
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn missing_at_symbol_before_version() {
+    pkg("foo", "0.0.1");
+    cargo_process("install foo=0.2.0")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] invalid character `=` in package name: `foo=0.2.0`, characters must be Unicode XID characters (numbers, `-`, `_`, or most letters)
+
+[HELP] if this is meant to be a package name followed by a version, insert an `@` like `foo@=0.2.0`
 
 "#]])
         .run();
@@ -439,7 +455,7 @@ fn install_location_precedence() {
     let t1 = root.join("t1");
     let t2 = root.join("t2");
     let t3 = root.join("t3");
-    let t4 = cargo_home();
+    let t4 = paths::cargo_home();
 
     fs::create_dir(root.join(".cargo")).unwrap();
     fs::write(
@@ -485,11 +501,162 @@ fn install_location_precedence() {
 }
 
 #[cargo_test]
+fn relative_install_location_without_trailing_slash() {
+    let p = project().file("src/main.rs", "fn main() {}").build();
+
+    let root = paths::root();
+    let root_t1 = root.join("t1");
+    let p_path = p.root().to_path_buf();
+    let project_t1 = p_path.join("t1");
+
+    fs::create_dir(root.join(".cargo")).unwrap();
+    fs::write(
+        root.join(".cargo/config.toml"),
+        r#"
+            [install]
+            root = "t1"
+        "#,
+    )
+    .unwrap();
+
+    let mut cmd = cargo_process("install --path .");
+    cmd.cwd(p.root());
+    cmd.with_stderr_data(str![[r#"
+[WARNING] the `install.root` value `t1` defined in [ROOT]/.cargo/config.toml without a trailing slash is deprecated
+  |
+  = [NOTE] a future version of Cargo will treat it as relative to the configuration directory
+  = [HELP] add a trailing slash (`t1/`) to adopt the correct behavior and silence this warning
+  = [NOTE] see more at https://doc.rust-lang.org/cargo/reference/config.html#config-relative-paths
+[INSTALLING] foo v0.0.1 ([ROOT]/foo)
+[COMPILING] foo v0.0.1 ([ROOT]/foo)
+[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
+[INSTALLING] [ROOT]/foo/t1/bin/foo[EXE]
+[INSTALLED] package `foo v0.0.1 ([ROOT]/foo)` (executable `foo[EXE]`)
+[WARNING] be sure to add `[ROOT]/foo/t1/bin` to your PATH to be able to run the installed binaries
+
+"#]])
+        .run();
+
+    // NOTE: the install location is relative to the CWD, not the config file
+    assert_has_not_installed_exe(&root_t1, "foo");
+    assert_has_installed_exe(&project_t1, "foo");
+}
+
+#[cargo_test]
+fn cli_root_argument_without_deprecation_warning() {
+    // Verify that using the --root CLI argument does not produce the deprecation warning.
+    let p = project().file("src/main.rs", "fn main() {}").build();
+
+    let root = paths::root();
+    let root_t1 = root.join("t1");
+    let p_path = p.root().to_path_buf();
+    let project_t1 = p_path.join("t1");
+
+    cargo_process("install --path . --root")
+        .arg("t1")
+        .cwd(p.root())
+        .with_stderr_data(str![[r#"
+[INSTALLING] foo v0.0.1 ([ROOT]/foo)
+[COMPILING] foo v0.0.1 ([ROOT]/foo)
+[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
+[INSTALLING] [ROOT]/foo/t1/bin/foo[EXE]
+[INSTALLED] package `foo v0.0.1 ([ROOT]/foo)` (executable `foo[EXE]`)
+[WARNING] be sure to add `[ROOT]/foo/t1/bin` to your PATH to be able to run the installed binaries
+
+"#]])
+        .run();
+    assert_has_not_installed_exe(&root_t1, "foo");
+    assert_has_installed_exe(&project_t1, "foo");
+}
+
+#[cargo_test]
+fn relative_install_location_with_trailing_slash() {
+    let p = project().file("src/main.rs", "fn main() {}").build();
+
+    let root = paths::root();
+    let root_t1 = root.join("t1");
+    let p_path = p.root().to_path_buf();
+    let project_t1 = p_path.join("t1");
+
+    fs::create_dir(root.join(".cargo")).unwrap();
+    fs::write(
+        root.join(".cargo/config.toml"),
+        r#"
+            [install]
+            root = "t1/"
+        "#,
+    )
+    .unwrap();
+
+    let mut cmd = cargo_process("install --path .");
+    cmd.cwd(p.root());
+    cmd.with_stderr_data(str![[r#"
+[INSTALLING] foo v0.0.1 ([ROOT]/foo)
+[COMPILING] foo v0.0.1 ([ROOT]/foo)
+[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
+[INSTALLING] [ROOT]/t1/bin/foo[EXE]
+[INSTALLED] package `foo v0.0.1 ([ROOT]/foo)` (executable `foo[EXE]`)
+[WARNING] be sure to add `[ROOT]/t1/bin` to your PATH to be able to run the installed binaries
+
+"#]])
+        .run();
+
+    assert_has_installed_exe(&root_t1, "foo");
+    assert_has_not_installed_exe(&project_t1, "foo");
+}
+
+#[cargo_test]
+fn relative_install_location_with_path_set() {
+    // Test that when the absolute install path is in PATH, no warning is shown
+    let p = project().file("src/main.rs", "fn main() {}").build();
+
+    let root = paths::root();
+    let p_path = p.root().to_path_buf();
+    let project_t1 = p_path.join("t1");
+
+    fs::create_dir(root.join(".cargo")).unwrap();
+    fs::write(
+        root.join(".cargo/config.toml"),
+        r#"
+            [install]
+            root = "t1"
+        "#,
+    )
+    .unwrap();
+
+    // Add the absolute path to PATH environment variable
+    let install_bin_path = project_t1.join("bin");
+    let mut path = path();
+    path.push(install_bin_path);
+    let new_path = env::join_paths(path).unwrap();
+
+    let mut cmd = cargo_process("install --path .");
+    cmd.cwd(p.root());
+    cmd.env("PATH", new_path);
+    cmd.with_stderr_data(str![[r#"
+[WARNING] the `install.root` value `t1` defined in [ROOT]/.cargo/config.toml without a trailing slash is deprecated
+  |
+  = [NOTE] a future version of Cargo will treat it as relative to the configuration directory
+  = [HELP] add a trailing slash (`t1/`) to adopt the correct behavior and silence this warning
+  = [NOTE] see more at https://doc.rust-lang.org/cargo/reference/config.html#config-relative-paths
+[INSTALLING] foo v0.0.1 ([ROOT]/foo)
+[COMPILING] foo v0.0.1 ([ROOT]/foo)
+[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
+[INSTALLING] [ROOT]/foo/t1/bin/foo[EXE]
+[INSTALLED] package `foo v0.0.1 ([ROOT]/foo)` (executable `foo[EXE]`)
+
+"#]])
+        .run();
+
+    assert_has_installed_exe(&project_t1, "foo");
+}
+
+#[cargo_test]
 fn install_path() {
     let p = project().file("src/main.rs", "fn main() {}").build();
 
     cargo_process("install --path").arg(p.root()).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
     // path-style installs force a reinstall
     p.cargo("install --path .").with_stderr_data(str![[r#"
 [INSTALLING] foo v0.0.1 ([ROOT]/foo)
@@ -507,7 +674,7 @@ fn install_target_dir() {
 
     p.cargo("install --target-dir td_test")
         .with_stderr_data(str![[r#"
-[WARNING] Using `cargo install` to install the binaries from the package in current working directory is deprecated, use `cargo install --path .` instead. Use `cargo build` if you want to simply build the package.
+[WARNING] using `cargo install` to install the binaries from the package in current working directory is deprecated, use `cargo install --path .` instead. [NOTE] use `cargo build` if you want to simply build the package.
 [INSTALLING] foo v0.0.1 ([ROOT]/foo)
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
@@ -680,7 +847,7 @@ fn multiple_binaries_in_selected_package_installs_all() {
         .arg("bar")
         .run();
 
-    let cargo_home = cargo_home();
+    let cargo_home = paths::cargo_home();
     assert_has_installed_exe(&cargo_home, "bin1");
     assert_has_installed_exe(&cargo_home, "bin2");
 }
@@ -700,7 +867,7 @@ fn multiple_binaries_in_selected_package_with_bin_option_installs_only_one() {
         .arg("bar")
         .run();
 
-    let cargo_home = cargo_home();
+    let cargo_home = paths::cargo_home();
     assert_has_installed_exe(&cargo_home, "bin1");
     assert_has_not_installed_exe(&cargo_home, "bin2");
 }
@@ -718,14 +885,14 @@ fn multiple_crates_select() {
         .arg(p.url().to_string())
         .arg("foo")
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
-    assert_has_not_installed_exe(cargo_home(), "bar");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "bar");
 
     cargo_process("install --git")
         .arg(p.url().to_string())
         .arg("bar")
         .run();
-    assert_has_installed_exe(cargo_home(), "bar");
+    assert_has_installed_exe(paths::cargo_home(), "bar");
 }
 
 #[cargo_test]
@@ -750,7 +917,7 @@ fn multiple_crates_git_all() {
         )
         .build();
 
-    cargo_process(&format!("install --git {} bin1 bin2", p.url().to_string())).run();
+    cargo_process(&format!("install --git {} bin1 bin2", p.url())).run();
 }
 
 #[cargo_test]
@@ -774,7 +941,7 @@ fn multiple_crates_auto_binaries() {
         .build();
 
     cargo_process("install --path").arg(p.root()).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -809,7 +976,7 @@ fn multiple_crates_auto_examples() {
         .arg(p.root())
         .arg("--example=foo")
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -873,7 +1040,7 @@ fn examples() {
         .arg(p.root())
         .arg("--example=foo")
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -1003,7 +1170,7 @@ fn compile_failure() {
 ...
 [ERROR] could not compile `foo` (bin "foo") due to 1 previous error
 [ERROR] failed to compile `foo v0.0.1 ([ROOT]/foo)`, intermediate artifacts can be found at `[ROOT]/foo/target`.
-To reuse those artifacts with a future compilation, set the environment variable `CARGO_TARGET_DIR` to that path.
+To reuse those artifacts with a future compilation, set the environment variable `CARGO_BUILD_BUILD_DIR` to that path.
 ...
 "#]])
         .run();
@@ -1031,8 +1198,8 @@ fn git_repo() {
 
 "#]])
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -1048,10 +1215,10 @@ fn git_repo_with_lowercase_cargo_toml() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] git repository [..]
-[ERROR] Could not find Cargo.toml in `[..]`, but found cargo.toml please try to rename it to Cargo.toml
+[ERROR] could not find `Cargo.toml` in `[..]`
+[HELP] found `cargo.toml`, consider renaming it to `Cargo.toml`
 
-"#]]
-        )
+"#]])
         .run();
 }
 
@@ -1087,7 +1254,7 @@ foo v0.0.1:
 
 "#]])
         .run();
-    let mut worldfile_path = cargo_home();
+    let mut worldfile_path = paths::cargo_home();
     worldfile_path.push(".crates.toml");
     let mut worldfile = OpenOptions::new()
         .write(true)
@@ -1104,11 +1271,11 @@ Caused by:
   invalid TOML found for metadata
 
 Caused by:
-  TOML parse error at line 1, column 1
+  TOML parse error at line 1, column 4
     |
   1 | v1]
-    | ^
-  invalid key
+    |    ^
+  key with no value, expected `=`
 
 "#]])
         .run();
@@ -1147,8 +1314,8 @@ fn uninstall_piecemeal() {
         .build();
 
     cargo_process("install --path").arg(p.root()).run();
-    assert_has_installed_exe(cargo_home(), "foo");
-    assert_has_installed_exe(cargo_home(), "bar");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "bar");
 
     cargo_process("uninstall foo --bin=bar")
         .with_stderr_data(str![[r#"
@@ -1157,8 +1324,8 @@ fn uninstall_piecemeal() {
 "#]])
         .run();
 
-    assert_has_installed_exe(cargo_home(), "foo");
-    assert_has_not_installed_exe(cargo_home(), "bar");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "bar");
 
     cargo_process("uninstall foo --bin=foo")
         .with_stderr_data(str![[r#"
@@ -1166,7 +1333,7 @@ fn uninstall_piecemeal() {
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
 
     cargo_process("uninstall foo")
         .with_status(101)
@@ -1203,10 +1370,10 @@ fn installs_from_cwd_by_default() {
     let p = project().file("src/main.rs", "fn main() {}").build();
 
     p.cargo("install").with_stderr_data(str![[r#"
-[WARNING] Using `cargo install` to install the binaries from the package in current working directory is deprecated, use `cargo install --path .` instead. Use `cargo build` if you want to simply build the package.
+[WARNING] using `cargo install` to install the binaries from the package in current working directory is deprecated, use `cargo install --path .` instead. [NOTE] use `cargo build` if you want to simply build the package.
 ...
 "#]]).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -1228,11 +1395,11 @@ fn installs_from_cwd_with_2018_warnings() {
     p.cargo("install")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] Using `cargo install` to install the binaries from the package in current working directory is no longer supported, use `cargo install --path .` instead. Use `cargo build` if you want to simply build the package.
+[ERROR] using `cargo install` to install the binaries from the package in current working directory is no longer supported, use `cargo install --path .` instead. [NOTE] use `cargo build` if you want to simply build the package.
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -1247,7 +1414,7 @@ fn uninstall_cwd() {
 [WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
 
 "#]]).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 
     p.cargo("uninstall")
         .with_stdout_data("")
@@ -1256,7 +1423,7 @@ fn uninstall_cwd() {
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -1279,9 +1446,6 @@ fn uninstall_cwd_no_project() {
         .with_stdout_data("")
         .with_stderr_data(str![[r#"
 [ERROR] failed to read `[ROOT]/Cargo.toml`
-
-Caused by:
-  [NOT_FOUND]
 
 "#]])
         .run();
@@ -1306,13 +1470,13 @@ fn do_not_rebuilds_on_local_install() {
 
     assert!(p.build_dir().exists());
     assert!(p.release_bin("foo").exists());
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
 fn reports_unsuccessful_subcommand_result() {
     Package::new("cargo-fail", "1.0.0")
-        .file("src/main.rs", "fn main() { panic!(); }")
+        .file("src/main.rs", r#"fn main() { panic!("EXPLICIT PANIC!"); }"#)
         .publish();
     cargo_process("install cargo-fail").run();
     cargo_process("--list")
@@ -1324,12 +1488,7 @@ fn reports_unsuccessful_subcommand_result() {
         .run();
     cargo_process("fail")
         .with_status(101)
-        .with_stderr_data(str![[r#"
-thread 'main' panicked at [ROOT]/home/.cargo/registry/src/-[HASH]/cargo-fail-1.0.0/src/main.rs:1:13:
-explicit panic
-[NOTE] run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-"#]])
+        .with_stderr_data("...\n[..]EXPLICIT PANIC![..]\n...")
         .run();
 }
 
@@ -1393,7 +1552,7 @@ fn readonly_dir() {
     fs::set_permissions(dir, perms).unwrap();
 
     cargo_process("install foo").cwd(dir).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -1435,7 +1594,6 @@ fn use_path_workspace() {
     assert_eq!(lock, lock2, "different lockfiles");
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn path_install_workspace_root_despite_default_members() {
     let p = project()
@@ -1470,19 +1628,22 @@ fn path_install_workspace_root_despite_default_members() {
         .arg("ws-root")
         .with_stderr_data(str![[r#"
 [INSTALLING] ws-root v0.1.0 ([ROOT]/foo)
+[WARNING] ws-member/Cargo.toml: `package.edition` is unspecified, defaulting to `2015` while the latest is `2024`
+[WARNING] `ws-member` (manifest) generated 1 warning
+[WARNING] Cargo.toml: `package.edition` is unspecified, defaulting to `2015` while the latest is `2024`
+[WARNING] `ws-root` (manifest) generated 1 warning
 [COMPILING] ws-root v0.1.0 ([ROOT]/foo)
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
 [INSTALLING] [ROOT]/home/.cargo/bin/ws-root[EXE]
 [INSTALLED] package `ws-root v0.1.0 ([ROOT]/foo)` (executable `ws-root[EXE]`)
 [WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
 
-"#]])
+"#]].unordered())
         // Particularly avoid "Installed package `ws-root v0.1.0 ([..]])` (executable `ws-member`)":
         .with_stderr_does_not_contain("ws-member")
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn git_install_workspace_root_despite_default_members() {
     let p = git::repo(&paths::root().join("foo"))
@@ -1590,12 +1751,12 @@ fn install_target_native() {
     cargo_process("install foo --target")
         .arg(cargo_test_support::rustc_host())
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
 fn install_target_foreign() {
-    if cross_compile::disabled() {
+    if cross_compile_disabled() {
         return;
     }
 
@@ -1604,7 +1765,7 @@ fn install_target_foreign() {
     cargo_process("install foo --target")
         .arg(cross_compile::alternate())
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -1768,8 +1929,8 @@ fn uninstall_multiple_and_some_pkg_does_not_exist() {
 "#]])
         .run();
 
-    assert_has_not_installed_exe(cargo_home(), "foo");
-    assert_has_not_installed_exe(cargo_home(), "bar");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "bar");
 }
 
 #[cargo_test]
@@ -1793,7 +1954,7 @@ fn custom_target_dir_for_git_source() {
 
 #[cargo_test]
 fn install_respects_lock_file() {
-    // `cargo install` now requires --locked to use a Cargo.lock.
+    // Verify `cargo install` uses the packaged Cargo.lock by default.
     Package::new("bar", "0.1.0").publish();
     Package::new("bar", "0.1.1")
         .file("src/lib.rs", "not rust")
@@ -1826,18 +1987,15 @@ dependencies = [
     cargo_process("install foo")
         .with_stderr_data(str![[r#"
 ...
-[..]not rust[..]
+[COMPILING] bar v0.1.0
 ...
 "#]])
-        .with_status(101)
         .run();
-    cargo_process("install --locked foo").run();
 }
 
 #[cargo_test]
 fn install_path_respects_lock_file() {
-    // --path version of install_path_respects_lock_file, --locked is required
-    // to use Cargo.lock.
+    // Verify `cargo install --path` uses Cargo.lock by default.
     Package::new("bar", "0.1.0").publish();
     Package::new("bar", "0.1.1")
         .file("src/lib.rs", "not rust")
@@ -1876,12 +2034,98 @@ dependencies = [
     p.cargo("install --path .")
         .with_stderr_data(str![[r#"
 ...
-[..]not rust[..]
+[COMPILING] bar v0.1.0
 ...
 "#]])
-        .with_status(101)
         .run();
-    p.cargo("install --path . --locked").run();
+}
+
+#[cargo_test]
+fn locked_install_honors_lock_file() {
+    // Verify `--locked` uses the packaged lock file.
+    Package::new("bar", "0.1.0").publish();
+    Package::new("bar", "0.1.1")
+        .file("src/lib.rs", "not rust")
+        .publish();
+    Package::new("foo", "0.1.0")
+        .dep("bar", "0.1")
+        .file("src/lib.rs", "")
+        .file(
+            "src/main.rs",
+            "extern crate foo; extern crate bar; fn main() {}",
+        )
+        .file(
+            "Cargo.lock",
+            r#"
+[[package]]
+name = "bar"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "foo"
+version = "0.1.0"
+dependencies = [
+ "bar 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+"#,
+        )
+        .publish();
+
+    cargo_process("install --locked foo")
+        .with_stderr_data(str![[r#"
+...
+[COMPILING] bar v0.1.0
+...
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn locked_install_path_honors_lock_file() {
+    // Verify `--locked` uses Cargo.lock when installing from a path.
+    Package::new("bar", "0.1.0").publish();
+    Package::new("bar", "0.1.1")
+        .file("src/lib.rs", "not rust")
+        .publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+             [package]
+             name = "foo"
+             version = "0.1.0"
+
+             [dependencies]
+             bar = "0.1"
+             "#,
+        )
+        .file("src/main.rs", "extern crate bar; fn main() {}")
+        .file(
+            "Cargo.lock",
+            r#"
+ [[package]]
+ name = "bar"
+ version = "0.1.0"
+ source = "registry+https://github.com/rust-lang/crates.io-index"
+
+ [[package]]
+ name = "foo"
+ version = "0.1.0"
+ dependencies = [
+  "bar 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ ]
+ "#,
+        )
+        .build();
+
+    p.cargo("install --path . --locked")
+        .with_stderr_data(str![[r#"
+...
+[COMPILING] bar v0.1.0
+...
+"#]])
+        .run();
 }
 
 #[cargo_test]
@@ -1947,15 +2191,19 @@ fn git_repo_replace() {
     path.push(".cargo/.crates.toml");
 
     assert_ne!(old_rev, new_rev);
-    assert!(fs::read_to_string(path.clone())
-        .unwrap()
-        .contains(&format!("{}", old_rev)));
+    assert!(
+        fs::read_to_string(path.clone())
+            .unwrap()
+            .contains(&format!("{}", old_rev))
+    );
     cargo_process("install --force --git")
         .arg(p.url().to_string())
         .run();
-    assert!(fs::read_to_string(path)
-        .unwrap()
-        .contains(&format!("{}", new_rev)));
+    assert!(
+        fs::read_to_string(path)
+            .unwrap()
+            .contains(&format!("{}", new_rev))
+    );
 }
 
 #[cargo_test]
@@ -1985,6 +2233,8 @@ fn workspace_uses_workspace_target_dir() {
         .arg(p.root().join("bar"))
         .with_stderr_data(str![[r#"
 [INSTALLING] bar v0.1.0 ([ROOT]/foo/bar)
+[WARNING] Cargo.toml: `package.edition` is unspecified, defaulting to `2015` while the latest is `2024`
+[WARNING] `foo` (manifest) generated 1 warning
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
 [INSTALLING] [ROOT]/home/.cargo/bin/bar[EXE]
 [INSTALLED] package `bar v0.1.0 ([ROOT]/foo/bar)` (executable `bar[EXE]`)
@@ -2010,7 +2260,7 @@ fn install_ignores_local_cargo_config() {
         .build();
 
     p.cargo("install bar").run();
-    assert_has_installed_exe(cargo_home(), "bar");
+    assert_has_installed_exe(paths::cargo_home(), "bar");
 }
 
 #[cargo_test]
@@ -2031,14 +2281,14 @@ fn install_ignores_unstable_table_in_local_cargo_config() {
     p.cargo("install bar")
         .masquerade_as_nightly_cargo(&["build-std"])
         .run();
-    assert_has_installed_exe(cargo_home(), "bar");
+    assert_has_installed_exe(paths::cargo_home(), "bar");
 }
 
 #[cargo_test]
 fn install_global_cargo_config() {
     pkg("bar", "0.0.1");
 
-    let config = cargo_home().join("config.toml");
+    let config = paths::cargo_home().join("config.toml");
     let mut toml = fs::read_to_string(&config).unwrap_or_default();
 
     toml.push_str(
@@ -2085,7 +2335,6 @@ fn install_path_config() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn install_version_req() {
     // Try using a few versionreq styles.
@@ -2140,7 +2389,7 @@ fn git_install_reads_workspace_manifest() {
         )
         .build();
 
-    cargo_process(&format!("install --git {}", p.url().to_string()))
+    cargo_process(&format!("install --git {}", p.url()))
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/foo`
@@ -2149,13 +2398,16 @@ fn git_install_reads_workspace_manifest() {
   |
 6 |             incremental = 3
   |                           ^
-  |
 [ERROR] invalid type: integer `3`, expected a boolean
  --> home/.cargo/git/checkouts/foo-[HASH]/[..]/Cargo.toml:6:27
   |
 6 |             incremental = 3
   |                           ^
-  |
+[ERROR] failed searching for potential workspace
+package manifest: `[ROOT]/home/.cargo/git/checkouts/foo-[HASH]/[..]/bin1/Cargo.toml`
+invalid potential workspace manifest: `[ROOT]/home/.cargo/git/checkouts/foo-[HASH]/[..]/Cargo.toml`
+
+[HELP] to avoid searching for a non-existent workspace, add `[workspace]` to the package manifest
 
 "#]])
         .run();
@@ -2201,6 +2453,32 @@ fn install_git_with_symlink_home() {
 fn install_yanked_cargo_package() {
     Package::new("baz", "0.0.1").yanked(true).publish();
     cargo_process("install baz --version 0.0.1")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[ERROR] cannot install package `baz`, it has been yanked from registry `crates-io`
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn install_yanked_only_with_caret_req() {
+    Package::new("baz", "2.0.0").yanked(true).publish();
+    cargo_process("install baz --version ^2")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[ERROR] cannot install package `baz`, it has been yanked from registry `crates-io`
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn install_yanked_only_without_version() {
+    Package::new("baz", "0.0.1").yanked(true).publish();
+    cargo_process("install baz")
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
@@ -2271,7 +2549,27 @@ workspace: [ROOT]/foo/Cargo.toml
 [WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
 
 "#]]).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
+}
+
+#[cargo_test]
+fn install_without_published_lockfile() {
+    Package::new("foo", "0.1.0")
+        .file("src/main.rs", "//! Some docs\nfn main() {}")
+        .publish();
+
+    cargo_process("install foo").with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] foo v0.1.0 (registry `dummy-registry`)
+[INSTALLING] foo v0.1.0
+[COMPILING] foo v0.1.0
+[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
+[INSTALLING] [ROOT]/home/.cargo/bin/foo[EXE]
+[INSTALLED] package `foo v0.1.0` (executable `foo[EXE]`)
+[WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
+
+"#]]).run();
 }
 
 #[cargo_test]
@@ -2376,7 +2674,7 @@ fn no_auto_fix_note() {
 
 "#]])
         .run();
-    assert_has_installed_exe(cargo_home(), "auto_fix");
+    assert_has_installed_exe(paths::cargo_home(), "auto_fix");
 
     cargo_process("uninstall auto_fix")
         .with_stderr_data(str![[r#"
@@ -2384,7 +2682,7 @@ fn no_auto_fix_note() {
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "auto_fix");
+    assert_has_not_installed_exe(paths::cargo_home(), "auto_fix");
 }
 
 #[cargo_test]
@@ -2410,7 +2708,7 @@ fn failed_install_retains_temp_directory() {
 
 [ERROR] could not compile `foo` (bin "foo") due to 1 previous error
 [ERROR] failed to compile `foo v0.0.1`, intermediate artifacts can be found at `[..]`.
-To reuse those artifacts with a future compilation, set the environment variable `CARGO_TARGET_DIR` to that path.
+To reuse those artifacts with a future compilation, set the environment variable `CARGO_BUILD_BUILD_DIR` to that path.
 
 "#]]);
 
@@ -2419,7 +2717,50 @@ To reuse those artifacts with a future compilation, set the environment variable
     let end = stderr.find('.').unwrap() - 1;
     let path = Path::new(&stderr[..end]);
     assert!(path.exists());
-    assert!(path.join("release/deps").exists());
+    assert!(path.join("release/build/foo").exists());
+}
+
+#[cargo_test]
+fn failed_install_points_to_build_dir_for_intermediate_artifacts() {
+    let custom_build_dir = cargo_home().join("build-artifacts");
+
+    let p = project()
+        .file("src/main.rs", "x")
+        .file(
+            "Cargo.toml",
+            r#"
+        [package]
+        name = "foo"
+        version = "0.0.1"
+        authors = []
+        edition = "2021"
+
+        [dependencies]
+    "#,
+        )
+        .build();
+
+    let err = cargo_process("install --path")
+        .env("CARGO_BUILD_BUILD_DIR", &custom_build_dir)
+        .arg(p.root())
+        .exec_with_output()
+        .unwrap_err();
+    let err = err.downcast::<ProcessError>().unwrap();
+    let stderr = String::from_utf8(err.stderr.unwrap()).unwrap();
+    assert_e2e().eq(&stderr, str![[r#"
+[INSTALLING] foo v0.0.1 ([ROOT]/foo)
+[COMPILING] foo v0.0.1 ([ROOT]/foo)
+[ERROR] expected one of `!` or `::`, found `<eof>`
+ --> src/main.rs:1:1
+  |
+1 | x
+  | ^ expected one of `!` or `::`
+
+[ERROR] could not compile `foo` (bin "foo") due to 1 previous error
+[ERROR] failed to compile `foo v0.0.1 ([ROOT]/foo)`, intermediate artifacts can be found at `[ROOT]/home/.cargo/build-artifacts`.
+To reuse those artifacts with a future compilation, set the environment variable `CARGO_BUILD_BUILD_DIR` to that path.
+
+"#]]);
 }
 
 #[cargo_test]
@@ -2447,7 +2788,7 @@ fn sparse_install() {
 
 "#]])
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
     let assert_v1 = |expected| {
         let v1 = fs::read_to_string(paths::home().join(".cargo/.crates.toml")).unwrap();
         assert_e2e().eq(&v1, expected);
@@ -2458,7 +2799,7 @@ fn sparse_install() {
 
 "#]]);
     cargo_process("install bar").run();
-    assert_has_installed_exe(cargo_home(), "bar");
+    assert_has_installed_exe(paths::cargo_home(), "bar");
     assert_v1(str![[r#"
 [v1]
 "bar 0.0.1 (registry+https://github.com/rust-lang/crates.io-index)" = ["bar[EXE]"]
@@ -2472,7 +2813,7 @@ fn sparse_install() {
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "bar");
+    assert_has_not_installed_exe(paths::cargo_home(), "bar");
     assert_v1(str![[r#"
 [v1]
 "foo 0.0.1 (sparse+http://127.0.0.1:[..]/index/)" = ["foo[EXE]"]
@@ -2484,7 +2825,7 @@ fn sparse_install() {
 
 "#]])
         .run();
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
     assert_v1(str![[r#"
 [v1]
 
@@ -2511,8 +2852,6 @@ fn self_referential() {
 [DOWNLOADING] crates ...
 [DOWNLOADED] foo v0.0.2 (registry `dummy-registry`)
 [INSTALLING] foo v0.0.2
-[LOCKING] 2 packages to latest compatible versions
-[ADDING] foo v0.0.1 (latest: v0.0.2)
 [DOWNLOADING] crates ...
 [DOWNLOADED] foo v0.0.1 (registry `dummy-registry`)
 [COMPILING] foo v0.0.1
@@ -2523,7 +2862,7 @@ fn self_referential() {
 [WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
 
 "#]]).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
@@ -2547,6 +2886,9 @@ fn ambiguous_registry_vs_local_package() {
 
         [dependencies]
         foo = "0.0.1"
+
+        [lints.cargo]
+        default = "allow"
     "#,
         )
         .build();
@@ -2556,7 +2898,6 @@ fn ambiguous_registry_vs_local_package() {
         .with_stderr_data(str![[r#"
 [INSTALLING] foo v0.1.0 ([ROOT]/foo)
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
 [DOWNLOADING] crates ...
 [DOWNLOADED] foo v0.0.1 (registry `dummy-registry`)
 [COMPILING] foo v0.0.1
@@ -2568,11 +2909,11 @@ fn ambiguous_registry_vs_local_package() {
 
 "#]])
         .run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 }
 
 #[cargo_test]
-fn install_with_redundant_default_mode() {
+fn install_with_redundant_default_profile() {
     pkg("foo", "0.0.1");
 
     cargo_process("install foo --release")
@@ -2587,6 +2928,26 @@ For more information, try '--help'.
 
 "#]])
         .with_status(1)
+        .run();
+}
+
+#[cargo_test]
+fn install_with_debug_profile() {
+    pkg("foo", "0.0.1");
+
+    cargo_process("install foo --debug")
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] foo v0.0.1 (registry `dummy-registry`)
+[INSTALLING] foo v0.0.1
+[COMPILING] foo v0.0.1
+[FINISHED] `debug` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[INSTALLING] [ROOT]/home/.cargo/bin/foo[EXE]
+[INSTALLED] package `foo v0.0.1` (executable `foo[EXE]`)
+[WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
+
+"#]])
         .run();
 }
 
@@ -2614,10 +2975,12 @@ fn install_incompat_msrv() {
 
 fn assert_tracker_noexistence(key: &str) {
     let v1_data: toml::Value =
-        toml::from_str(&fs::read_to_string(cargo_home().join(".crates.toml")).unwrap()).unwrap();
-    let v2_data: serde_json::Value =
-        serde_json::from_str(&fs::read_to_string(cargo_home().join(".crates2.json")).unwrap())
+        toml::from_str(&fs::read_to_string(paths::cargo_home().join(".crates.toml")).unwrap())
             .unwrap();
+    let v2_data: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(paths::cargo_home().join(".crates2.json")).unwrap(),
+    )
+    .unwrap();
 
     assert!(v1_data["v1"].get(key).is_none());
     assert!(v2_data["installs"][key].is_null());
@@ -2666,9 +3029,9 @@ fn uninstall_running_binary() {
 [WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
 
 "#]]).run();
-    assert_has_installed_exe(cargo_home(), "foo");
+    assert_has_installed_exe(paths::cargo_home(), "foo");
 
-    let foo_bin = cargo_home().join("bin").join(exe("foo"));
+    let foo_bin = paths::cargo_home().join("bin").join(exe("foo"));
     let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = l.local_addr().unwrap().to_string();
     let t = thread::spawn(move || {
@@ -2716,7 +3079,7 @@ fn uninstall_running_binary() {
         t.join().unwrap();
     };
 
-    assert_has_not_installed_exe(cargo_home(), "foo");
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
     assert_tracker_noexistence(key);
 
     cargo_process("install foo").with_stderr_data(str![[r#"
@@ -2729,4 +3092,306 @@ fn uninstall_running_binary() {
 [WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
 
 "#]]).run();
+}
+
+#[cargo_test]
+fn dry_run() {
+    pkg("foo", "0.0.1");
+
+    cargo_process("-Z unstable-options install --dry-run foo")
+        .masquerade_as_nightly_cargo(&["install::dry-run"])
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] foo v0.0.1 (registry `dummy-registry`)
+[INSTALLING] foo v0.0.1
+[INSTALLING] [ROOT]/home/.cargo/bin/foo[EXE]
+[WARNING] aborting install due to dry run
+[WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
+
+"#]])
+        .run();
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
+}
+
+#[cargo_test]
+fn dry_run_incompatible_package() {
+    Package::new("some-package-from-the-distant-future", "0.0.1")
+        .rust_version("1.2345.0")
+        .file("src/main.rs", "fn main() {}")
+        .publish();
+
+    cargo_process("-Z unstable-options install --dry-run some-package-from-the-distant-future")
+        .masquerade_as_nightly_cargo(&["install::dry-run"])
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[ERROR] cannot install package `some-package-from-the-distant-future 0.0.1`, it requires rustc 1.2345.0 or newer, while the currently active rustc version is [..]
+
+"#]])
+        .run();
+    assert_has_not_installed_exe(paths::cargo_home(), "some-package-from-the-distant-future");
+}
+
+#[cargo_test]
+fn dry_run_incompatible_package_dependency() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                authors = []
+
+                [dependencies]
+                some-package-from-the-distant-future = { path = "a" }
+            "#,
+        )
+        .file("src/main.rs", "fn main() {}")
+        .file(
+            "a/Cargo.toml",
+            r#"
+                [package]
+                name = "some-package-from-the-distant-future"
+                version = "0.1.0"
+                authors = []
+                rust-version = "1.2345.0"
+            "#,
+        )
+        .file("a/src/lib.rs", "")
+        .build();
+
+    cargo_process("-Z unstable-options install --dry-run --path")
+        .arg(p.root())
+        .arg("foo")
+        .masquerade_as_nightly_cargo(&["install::dry-run"])
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[INSTALLING] foo v0.1.0 ([ROOT]/foo)
+[WARNING] Cargo.toml: `package.edition` is unspecified, defaulting to `2015` while the latest is `2024`
+[WARNING] `foo` (manifest) generated 1 warning
+[ERROR] failed to compile `foo v0.1.0 ([ROOT]/foo)`, intermediate artifacts can be found at `[ROOT]/foo/target`.
+To reuse those artifacts with a future compilation, set the environment variable `CARGO_BUILD_BUILD_DIR` to that path.
+
+Caused by:
+  rustc [..] is not supported by the following package:
+    some-package-from-the-distant-future@0.1.0 requires rustc 1.2345.0
+
+"#]])
+        .run();
+    assert_has_not_installed_exe(paths::cargo_home(), "foo");
+}
+
+#[cargo_test]
+fn dry_run_upgrade() {
+    pkg("foo", "0.0.1");
+    cargo_process("install foo").run();
+    assert_has_installed_exe(paths::cargo_home(), "foo");
+
+    pkg("foo", "0.0.2");
+    cargo_process("-Z unstable-options install --dry-run foo")
+        .masquerade_as_nightly_cargo(&["install::dry-run"])
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] foo v0.0.2 (registry `dummy-registry`)
+[INSTALLING] foo v0.0.2
+[REPLACING] [ROOT]/home/.cargo/bin/foo[EXE]
+[WARNING] aborting install due to dry run
+[WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
+
+"#]])
+        .run();
+    assert_has_installed_exe(paths::cargo_home(), "foo");
+}
+
+#[cargo_test]
+fn dry_run_remove_orphan() {
+    Package::new("bar", "1.0.0")
+        .file("src/bin/client.rs", "fn main() {}")
+        .file("src/bin/server.rs", "fn main() {}")
+        .publish();
+
+    cargo_process("install bar")
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[INSTALLING] bar v1.0.0
+[COMPILING] bar v1.0.0
+[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
+[INSTALLING] [ROOT]/home/.cargo/bin/client[EXE]
+[INSTALLING] [ROOT]/home/.cargo/bin/server[EXE]
+[INSTALLED] package `bar v1.0.0` (executables `client[EXE]`, `server[EXE]`)
+[WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
+
+"#]])
+        .run();
+    assert_has_installed_exe(paths::cargo_home(), "client");
+    assert_has_installed_exe(paths::cargo_home(), "server");
+
+    Package::new("bar", "2.0.0")
+        .file("src/bin/client.rs", "fn main() {}")
+        .publish();
+
+    cargo_process("-Z unstable-options install --dry-run bar")
+        .masquerade_as_nightly_cargo(&["install::dry-run"])
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v2.0.0 (registry `dummy-registry`)
+[INSTALLING] bar v2.0.0
+[REPLACING] [ROOT]/home/.cargo/bin/client[EXE]
+[REMOVING] executable `[ROOT]/home/.cargo/bin/server[EXE]` from previous version bar v1.0.0
+[WARNING] aborting install due to dry run
+[WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
+
+"#]])
+        .run();
+    assert_has_installed_exe(paths::cargo_home(), "client");
+    // Ensure server is still installed after the dry run
+    assert_has_installed_exe(paths::cargo_home(), "server");
+}
+
+#[cargo_test]
+fn prefixed_v_in_version() {
+    pkg("foo", "0.0.1");
+    cargo_process("install foo@v0.0.1")
+        .with_status(1)
+        .with_stderr_data(str![[r#"
+[ERROR] invalid value 'foo@v0.0.1' for '[CRATE[@<VER>]]...': the version provided, `v0.0.1` is not a valid SemVer requirement
+
+[HELP] try changing the version to `0.0.1`
+
+For more information, try '--help'.
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn emoji_name() {
+    pkg("foo", "0.0.1");
+    cargo_process("install 🦀")
+        .with_status(101)
+        .with_stdout_data("")
+        .with_stderr_data(str![[r#"
+[ERROR] invalid character `🦀` in package name: `🦀`, the first character must be a Unicode XID start character (most letters or `_`)
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn starts_with_number_case() {
+    pkg("foo", "0.0.1");
+    cargo_process("install 23898932983")
+        .with_status(101)
+        .with_stdout_data("")
+        .with_stderr_data(str![[r#"
+[ERROR] invalid character `2` in package name: `23898932983`, the name cannot start with a digit
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn mistaken_flag_case() {
+    pkg("foo", "0.0.1");
+    cargo_process("install ––path .") // en dashes
+        .with_status(101)
+        .with_stdout_data("")
+        .with_stderr_data(str![[r#"
+[ERROR] invalid character `–` in package name: `––path`, the first character must be a Unicode XID start character (most letters or `_`)
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn cap_lints_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+cargo-features = ["test-dummy-unstable"]
+
+[package]
+name = "foo"
+version = "0.0.1"
+edition = "2015"
+authors = []
+im-a-teapot = true
+
+[lints.cargo]
+im_a_teapot = "warn"
+            "#,
+        )
+        .file("src/main.rs", "fn main() { let unused = 10; }")
+        .build();
+    p.cargo("install --path .")
+        .masquerade_as_nightly_cargo(&["test-dummy-unstable"])
+        .with_stdout_data(str![])
+        .with_stderr_data(str![[r#"
+[INSTALLING] foo v0.0.1 ([ROOT]/foo)
+[WARNING] `im_a_teapot` is specified
+ --> Cargo.toml:9:1
+  |
+9 | im-a-teapot = true
+  | ^^^^^^^^^^^^^^^^^^
+  |
+  = [NOTE] `cargo::im_a_teapot` is set to `warn` in `[lints]`
+[WARNING] `foo` (manifest) generated 1 warning
+[COMPILING] foo v0.0.1 ([ROOT]/foo)
+[WARNING] unused variable: `unused`
+...
+[WARNING] `foo` (bin "foo") generated 1 warning (run `cargo fix --bin "foo" -p foo` to apply 1 suggestion)
+[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
+[INSTALLING] [ROOT]/home/.cargo/bin/foo[EXE]
+[INSTALLED] package `foo v0.0.1 ([ROOT]/foo)` (executable `foo[EXE]`)
+[WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn cap_lints_registry() {
+    Package::new("foo", "1.0.0")
+        .file(
+            "Cargo.toml",
+            r#"
+cargo-features = ["test-dummy-unstable"]
+
+[package]
+name = "foo"
+version = "1.0.0"
+edition = "2015"
+authors = []
+im-a-teapot = true
+
+[lints.cargo]
+im_a_teapot = "deny"
+            "#,
+        )
+        .file("src/main.rs", "fn main() { let unused = 10; }")
+        .publish();
+
+    cargo_process("install foo")
+        .masquerade_as_nightly_cargo(&["test-dummy-unstable"])
+        .with_stdout_data(str![])
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[DOWNLOADING] crates ...
+[DOWNLOADED] foo v1.0.0 (registry `dummy-registry`)
+[INSTALLING] foo v1.0.0
+[COMPILING] foo v1.0.0
+[FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
+[INSTALLING] [ROOT]/home/.cargo/bin/foo[EXE]
+[INSTALLED] package `foo v1.0.0` (executable `foo[EXE]`)
+[WARNING] be sure to add `[ROOT]/home/.cargo/bin` to your PATH to be able to run the installed binaries
+
+"#]])
+        .run();
 }

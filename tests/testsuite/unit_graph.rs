@@ -1,6 +1,6 @@
 //! Tests for --unit-graph option.
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::project;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
@@ -46,7 +46,8 @@ fn simple() {
         .file("src/lib.rs", "")
         .build();
 
-    p.cargo("build --features a/feata --unit-graph -Zunstable-options")
+    p.cargo("build --features a/feata --unit-graph")
+        .arg("-Zunstable-options")
         .masquerade_as_nightly_cargo(&["unit-graph"])
         .with_stdout_data(
             str![[r#"
@@ -61,6 +62,7 @@ fn simple() {
           "extern_crate_name": "b",
           "index": 1,
           "noprelude": false,
+          "nounused": false,
           "public": false
         }
       ],
@@ -68,7 +70,7 @@ fn simple() {
         "feata"
       ],
       "mode": "build",
-      "pkg_id": "a 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+      "pkg_id": "registry+https://github.com/rust-lang/crates.io-index#a@1.0.0",
       "platform": null,
       "profile": {
         "codegen_backend": null,
@@ -106,6 +108,7 @@ fn simple() {
           "extern_crate_name": "c",
           "index": 2,
           "noprelude": false,
+          "nounused": false,
           "public": false
         }
       ],
@@ -113,7 +116,7 @@ fn simple() {
         "featb"
       ],
       "mode": "build",
-      "pkg_id": "b 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+      "pkg_id": "registry+https://github.com/rust-lang/crates.io-index#b@1.0.0",
       "platform": null,
       "profile": {
         "codegen_backend": null,
@@ -151,7 +154,7 @@ fn simple() {
         "featc"
       ],
       "mode": "build",
-      "pkg_id": "c 1.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+      "pkg_id": "registry+https://github.com/rust-lang/crates.io-index#c@1.0.0",
       "platform": null,
       "profile": {
         "codegen_backend": null,
@@ -189,12 +192,13 @@ fn simple() {
           "extern_crate_name": "a",
           "index": 0,
           "noprelude": false,
+          "nounused": false,
           "public": false
         }
       ],
       "features": [],
       "mode": "build",
-      "pkg_id": "foo 0.1.0 (path+[ROOTURL]/foo)",
+      "pkg_id": "path+[ROOTURL]/foo#0.1.0",
       "platform": null,
       "profile": {
         "codegen_backend": null,
@@ -230,7 +234,7 @@ fn simple() {
   "version": 1
 }
 "#]]
-            .json(),
+            .is_json(),
         )
         .run();
 }

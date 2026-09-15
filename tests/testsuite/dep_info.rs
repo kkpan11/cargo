@@ -1,82 +1,16 @@
 //! Tests for dep-info files. This includes the dep-info file Cargo creates in
 //! the output directory, and the ones stored in the fingerprint.
 
-use std::fs;
 use std::path::Path;
-use std::str;
 
+use crate::prelude::*;
 use cargo_test_support::compare::assert_e2e;
-use cargo_test_support::paths::{self, CargoPathExt};
-use cargo_test_support::prelude::*;
+use cargo_test_support::paths;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
-use cargo_test_support::{
-    basic_bin_manifest, basic_manifest, main_file, project, rustc_host, Project,
-};
+use cargo_test_support::{assert_deps, assert_deps_contains};
+use cargo_test_support::{basic_bin_manifest, basic_manifest, main_file, project, rustc_host};
 use filetime::FileTime;
-
-// Helper for testing dep-info files in the fingerprint dir.
-#[track_caller]
-fn assert_deps(project: &Project, fingerprint: &str, test_cb: impl Fn(&Path, &[(u8, &str)])) {
-    let mut files = project
-        .glob(fingerprint)
-        .map(|f| f.expect("unwrap glob result"))
-        // Filter out `.json` entries.
-        .filter(|f| f.extension().is_none());
-    let info_path = files
-        .next()
-        .unwrap_or_else(|| panic!("expected 1 dep-info file at {}, found 0", fingerprint));
-    assert!(files.next().is_none(), "expected only 1 dep-info file");
-    let dep_info = fs::read(&info_path).unwrap();
-    let dep_info = &mut &dep_info[..];
-    let deps = (0..read_usize(dep_info))
-        .map(|_| {
-            (
-                read_u8(dep_info),
-                str::from_utf8(read_bytes(dep_info)).unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
-    test_cb(&info_path, &deps);
-
-    fn read_usize(bytes: &mut &[u8]) -> usize {
-        let ret = &bytes[..4];
-        *bytes = &bytes[4..];
-
-        u32::from_le_bytes(ret.try_into().unwrap()) as usize
-    }
-
-    fn read_u8(bytes: &mut &[u8]) -> u8 {
-        let ret = bytes[0];
-        *bytes = &bytes[1..];
-        ret
-    }
-
-    fn read_bytes<'a>(bytes: &mut &'a [u8]) -> &'a [u8] {
-        let n = read_usize(bytes);
-        let ret = &bytes[..n];
-        *bytes = &bytes[n..];
-        ret
-    }
-}
-
-fn assert_deps_contains(project: &Project, fingerprint: &str, expected: &[(u8, &str)]) {
-    assert_deps(project, fingerprint, |info_path, entries| {
-        for (e_kind, e_path) in expected {
-            let pattern = glob::Pattern::new(e_path).unwrap();
-            let count = entries
-                .iter()
-                .filter(|(kind, path)| kind == e_kind && pattern.matches(path))
-                .count();
-            if count != 1 {
-                panic!(
-                    "Expected 1 match of {} {} in {:?}, got {}:\n{:#?}",
-                    e_kind, e_path, info_path, count, entries
-                );
-            }
-        }
-    })
-}
 
 #[cargo_test]
 fn build_dep_info() {
@@ -91,7 +25,7 @@ fn build_dep_info() {
 
     assert!(depinfo_bin_path.is_file());
 
-    let depinfo = p.read_file(depinfo_bin_path.to_str().unwrap());
+    let depinfo = p.read_file(depinfo_bin_path);
 
     let bin_path = p.bin("foo");
     let src_path = p.root().join("src").join("foo.rs");
@@ -200,7 +134,7 @@ fn dep_path_inside_target_has_correct_path() {
 
     assert!(depinfo_path.is_file(), "{:?}", depinfo_path);
 
-    let depinfo = p.read_file(depinfo_path.to_str().unwrap());
+    let depinfo = p.read_file(depinfo_path);
 
     let bin_path = p.bin("a");
     let target_debug_blah = Path::new("target").join("debug").join("blah");
@@ -271,6 +205,9 @@ fn relative_depinfo_paths_ws() {
             [build-dependencies]
             bdep = "0.1"
             bar = {path = "../bar"}
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file(
@@ -299,6 +236,9 @@ fn relative_depinfo_paths_ws() {
 
             [dependencies]
             pmdep = "0.1"
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file(
@@ -320,8 +260,9 @@ fn relative_depinfo_paths_ws() {
         .build();
 
     let host = rustc_host();
-    p.cargo("build -Z binary-dep-depinfo --target")
+    p.cargo("build --target")
         .arg(&host)
+        .arg("-Zbinary-dep-depinfo")
         .masquerade_as_nightly_cargo(&["binary-dep-depinfo"])
         .with_stderr_data(str![[r#"
 ...
@@ -332,37 +273,47 @@ fn relative_depinfo_paths_ws() {
 
     assert_deps_contains(
         &p,
-        "target/debug/.fingerprint/pm-*/dep-lib-pm",
-        &[(0, "src/lib.rs"), (1, "debug/deps/libpmdep-*.rlib")],
-    );
-
-    assert_deps_contains(
-        &p,
-        &format!("target/{}/debug/.fingerprint/foo-*/dep-bin-foo", host),
+        "target/debug/build/pm/*/fingerprint/dep-lib-pm",
         &[
-            (0, "src/main.rs"),
-            (
-                1,
-                &format!(
-                    "debug/deps/{}pm-*.{}",
-                    paths::get_lib_prefix("proc-macro"),
-                    paths::get_lib_extension("proc-macro")
-                ),
-            ),
-            (1, &format!("{}/debug/deps/libbar-*.rlib", host)),
-            (1, &format!("{}/debug/deps/libregdep-*.rlib", host)),
+            (0, "src/lib.rs"),
+            (1, "debug/build/pmdep/*/out/libpmdep-*.rlib"),
         ],
     );
 
     assert_deps_contains(
         &p,
-        "target/debug/.fingerprint/foo-*/dep-build-script-build-script-build",
-        &[(0, "build.rs"), (1, "debug/deps/libbdep-*.rlib")],
+        &format!("target/{}/debug/build/foo/*/fingerprint/dep-bin-foo", host),
+        &[
+            (0, "src/main.rs"),
+            (
+                1,
+                &format!(
+                    "debug/build/pm/*/out/{}pm-*.{}",
+                    paths::get_lib_prefix("proc-macro"),
+                    paths::get_lib_extension("proc-macro")
+                ),
+            ),
+            (1, &format!("{}/debug/build/bar/*/out/libbar-*.rlib", host)),
+            (
+                1,
+                &format!("{}/debug/build/regdep/*/out/libregdep-*.rlib", host),
+            ),
+        ],
+    );
+
+    assert_deps_contains(
+        &p,
+        "target/debug/build/foo/*/fingerprint/dep-build-script-build-script-build",
+        &[
+            (0, "build.rs"),
+            (1, "debug/build/bdep/*/out/libbdep-*.rlib"),
+        ],
     );
 
     // Make sure it stays fresh.
-    p.cargo("build -Z binary-dep-depinfo --target")
+    p.cargo("build --target")
         .arg(&host)
+        .arg("-Zbinary-dep-depinfo")
         .masquerade_as_nightly_cargo(&["binary-dep-depinfo"])
         .with_stderr_data(str![[r#"
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -403,6 +354,9 @@ fn relative_depinfo_paths_no_ws() {
             [build-dependencies]
             bdep = "0.1"
             bar = {path = "bar"}
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file(
@@ -431,6 +385,9 @@ fn relative_depinfo_paths_no_ws() {
 
             [dependencies]
             pmdep = "0.1"
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file(
@@ -451,7 +408,8 @@ fn relative_depinfo_paths_no_ws() {
         .file("bar/src/lib.rs", "pub fn f() {}")
         .build();
 
-    p.cargo("build -Z binary-dep-depinfo")
+    p.cargo("build")
+        .arg("-Zbinary-dep-depinfo")
         .masquerade_as_nightly_cargo(&["binary-dep-depinfo"])
         .with_stderr_data(str![[r#"
 ...
@@ -462,36 +420,43 @@ fn relative_depinfo_paths_no_ws() {
 
     assert_deps_contains(
         &p,
-        "target/debug/.fingerprint/pm-*/dep-lib-pm",
-        &[(0, "src/lib.rs"), (1, "debug/deps/libpmdep-*.rlib")],
-    );
-
-    assert_deps_contains(
-        &p,
-        "target/debug/.fingerprint/foo-*/dep-bin-foo",
+        "target/debug/build/pm/*/fingerprint/dep-lib-pm",
         &[
-            (0, "src/main.rs"),
-            (
-                1,
-                &format!(
-                    "debug/deps/{}pm-*.{}",
-                    paths::get_lib_prefix("proc-macro"),
-                    paths::get_lib_extension("proc-macro")
-                ),
-            ),
-            (1, "debug/deps/libbar-*.rlib"),
-            (1, "debug/deps/libregdep-*.rlib"),
+            (0, "src/lib.rs"),
+            (1, "debug/build/pmdep/*/out/libpmdep-*.rlib"),
         ],
     );
 
     assert_deps_contains(
         &p,
-        "target/debug/.fingerprint/foo-*/dep-build-script-build-script-build",
-        &[(0, "build.rs"), (1, "debug/deps/libbdep-*.rlib")],
+        "target/debug/build/foo/*/fingerprint/dep-bin-foo",
+        &[
+            (0, "src/main.rs"),
+            (
+                1,
+                &format!(
+                    "debug/build/pm/*/out/{}pm-*.{}",
+                    paths::get_lib_prefix("proc-macro"),
+                    paths::get_lib_extension("proc-macro")
+                ),
+            ),
+            (1, "debug/build/bar/*/out/libbar-*.rlib"),
+            (1, "debug/build/regdep/*/out/libregdep-*.rlib"),
+        ],
+    );
+
+    assert_deps_contains(
+        &p,
+        "target/debug/build/foo/*/fingerprint/dep-build-script-build-script-build",
+        &[
+            (0, "build.rs"),
+            (1, "debug/build/bdep/*/out/libbdep-*.rlib"),
+        ],
     );
 
     // Make sure it stays fresh.
-    p.cargo("build -Z binary-dep-depinfo")
+    p.cargo("build")
+        .arg("-Zbinary-dep-depinfo")
         .masquerade_as_nightly_cargo(&["binary-dep-depinfo"])
         .with_stderr_data(str![[r#"
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -526,7 +491,7 @@ fn reg_dep_source_not_tracked() {
 
     assert_deps(
         &p,
-        "target/debug/.fingerprint/regdep-*/dep-lib-regdep",
+        "target/debug/build/regdep/*/fingerprint/dep-lib-regdep",
         |info_path, entries| {
             for (kind, path) in entries {
                 if *kind == 1 {
@@ -568,14 +533,18 @@ fn canonical_path() {
     real.mkdir_p();
     p.symlink(real, "target");
 
-    p.cargo("check -Z binary-dep-depinfo")
+    p.cargo("check")
+        .arg("-Zbinary-dep-depinfo")
         .masquerade_as_nightly_cargo(&["binary-dep-depinfo"])
         .run();
 
     assert_deps_contains(
         &p,
-        "target/debug/.fingerprint/foo-*/dep-lib-foo",
-        &[(0, "src/lib.rs"), (1, "debug/deps/libregdep-*.rmeta")],
+        "target/debug/build/foo/*/fingerprint/dep-lib-foo",
+        &[
+            (0, "src/lib.rs"),
+            (1, "debug/build/regdep/*/out/libregdep-*.rmeta"),
+        ],
     );
 }
 
@@ -614,6 +583,106 @@ fn non_local_build_script() {
         &contents,
         str![[r#"
 [ROOT]/foo/target/debug/foo[EXE]: [ROOT]/foo/src/main.rs
+
+"#]],
+    );
+}
+
+#[cargo_test]
+fn no_trailing_separator_after_package_root_build_script() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+            [package]
+            name = "foo"
+            version = "0.0.1"
+            authors = []
+            "#,
+        )
+        .file("src/main.rs", "fn main() {}")
+        .file(
+            "build.rs",
+            r#"
+            fn main() {
+                println!("cargo::rerun-if-changed=");
+            }
+            "#,
+        )
+        .build();
+
+    p.cargo("build").run();
+    let contents = p.read_file("target/debug/foo.d");
+
+    assert_e2e().eq(
+        &contents,
+        str![[r#"
+[ROOT]/foo/target/debug/foo[EXE]: [ROOT]/foo [ROOT]/foo/build.rs [ROOT]/foo/src/main.rs
+
+"#]],
+    );
+}
+
+#[cargo_test(nightly, reason = "proc_macro::tracked::path is unstable")]
+fn no_trailing_separator_after_package_root_proc_macro() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+            [package]
+            name = "foo"
+            version = "0.0.1"
+            authors = []
+            edition = "2018"
+
+            [dependencies]
+            pm = { path = "pm" }
+            "#,
+        )
+        .file(
+            "src/main.rs",
+            "
+            pm::noop!{}
+            fn main() {}
+            ",
+        )
+        .file(
+            "pm/Cargo.toml",
+            r#"
+            [package]
+            name = "pm"
+            version = "0.1.0"
+            edition = "2018"
+
+            [lib]
+            proc-macro = true
+            "#,
+        )
+        .file(
+            "pm/src/lib.rs",
+            r#"
+            #![feature(proc_macro_tracked_path)]
+            extern crate proc_macro;
+            use proc_macro::TokenStream;
+
+            #[proc_macro]
+            pub fn noop(_item: TokenStream) -> TokenStream {
+                proc_macro::tracked::path(
+                    std::env::current_dir().unwrap().to_str().unwrap()
+                );
+                "".parse().unwrap()
+            }
+            "#,
+        )
+        .build();
+
+    p.cargo("build").run();
+    let contents = p.read_file("target/debug/foo.d");
+
+    assert_e2e().eq(
+        &contents,
+        str![[r#"
+[ROOT]/foo/target/debug/foo[EXE]: [ROOT]/foo [ROOT]/foo/pm/src/lib.rs [ROOT]/foo/src/main.rs
 
 "#]],
     );

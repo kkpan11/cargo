@@ -1,9 +1,8 @@
 //! Tests for the `cargo update` command.
 
+use crate::prelude::*;
 use cargo_test_support::compare::assert_e2e;
-use cargo_test_support::prelude::*;
-use cargo_test_support::registry::{self};
-use cargo_test_support::registry::{Dependency, Package};
+use cargo_test_support::registry::{self, Package};
 use cargo_test_support::{basic_lib_manifest, basic_manifest, git, project, str};
 
 #[cargo_test]
@@ -116,13 +115,12 @@ fn transitive_minor_update() {
     p.cargo("update serde")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 0 packages to latest compatible versions
+[LOCKING] 0 packages to highest compatible versions
 [NOTE] pass `--verbose` to see 2 unchanged dependencies behind latest
 
 "#]])
         .run();
 }
-
 #[cargo_test]
 fn conservative() {
     Package::new("log", "0.1.0").publish();
@@ -169,7 +167,7 @@ fn conservative() {
     p.cargo("update serde")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 1 package to latest compatible version
+[LOCKING] 1 package to highest compatible version
 [UPDATING] serde v0.1.0 -> v0.1.1
 [NOTE] pass `--verbose` to see 1 unchanged dependencies behind latest
 
@@ -406,7 +404,6 @@ fn update_precise() {
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
 [DOWNGRADING] serde v0.2.1 -> v0.2.0
-[NOTE] pass `--verbose` to see 1 unchanged dependencies behind latest
 
 "#]])
         .run();
@@ -445,7 +442,7 @@ fn update_precise_mismatched() {
 candidate versions found which didn't match: 1.6.0
 location searched: `dummy-registry` index (which is replacing registry `crates-io`)
 required by package `bar v0.0.1 ([ROOT]/foo)`
-perhaps a crate was updated and forgotten to be re-vendored?
+[NOTE] perhaps a crate was updated and forgotten to be re-vendored?
 
 "#]])
         .with_status(101)
@@ -457,7 +454,7 @@ perhaps a crate was updated and forgotten to be re-vendored?
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
 [ERROR] no matching package named `serde` found
-location searched: registry `crates-io`
+location searched: `dummy-registry` index (which is replacing registry `crates-io`)
 required by package `bar v0.0.1 ([ROOT]/foo)`
 
 "#]])
@@ -575,7 +572,7 @@ fn update_recursive() {
     p.cargo("update serde:0.2.1 --recursive")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [UPDATING] log v0.1.0 -> v0.1.1
 [UPDATING] serde v0.2.1 -> v0.2.2
 
@@ -613,7 +610,7 @@ fn update_aggressive_alias_for_recursive() {
     p.cargo("update serde:0.2.1 --aggressive")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [UPDATING] log v0.1.0 -> v0.1.1
 [UPDATING] serde v0.2.1 -> v0.2.2
 
@@ -828,6 +825,7 @@ fn update_precise_first_run() {
     "root": "path+[ROOTURL]/foo#bar@0.0.1"
   },
   "target_directory": "[ROOT]/foo/target",
+  "build_directory": "[ROOT]/foo/target",
   "version": 1,
   "workspace_default_members": [
     "path+[ROOTURL]/foo#bar@0.0.1"
@@ -838,7 +836,7 @@ fn update_precise_first_run() {
   "workspace_root": "[ROOT]/foo"
 }
 "#]]
-            .json(),
+            .is_json(),
         )
         .run();
 
@@ -922,7 +920,7 @@ fn dry_run_update() {
     p.cargo("update serde --dry-run")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 1 package to latest compatible version
+[LOCKING] 1 package to highest compatible version
 [UPDATING] serde v0.1.0 -> v0.1.1
 [NOTE] pass `--verbose` to see 1 unchanged dependencies behind latest
 [WARNING] not updating lockfile due to dry run
@@ -998,7 +996,7 @@ Caused by:
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
 [ERROR] no matching package named `bar` found
-location searched: registry `crates-io`
+location searched: `dummy-registry` index (which is replacing registry `crates-io`)
 required by package `foo v0.1.0 ([ROOT]/foo)`
 
 "#]])
@@ -1018,7 +1016,7 @@ required by package `foo v0.1.0 ([ROOT]/foo)`
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
 [ERROR] no matching package named `bar` found
-location searched: registry `crates-io`
+location searched: `dummy-registry` index (which is replacing registry `crates-io`)
 required by package `foo v0.1.0 ([ROOT]/foo)`
 
 "#]])
@@ -1100,7 +1098,7 @@ rustdns.workspace = true
     p.cargo("generate-lockfile")
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/rustdns`
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 
 "#]])
         .run();
@@ -1115,7 +1113,7 @@ rustdns.workspace = true
 
     p.cargo("update -p rootcrate")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [UPDATING] rootcrate v2.29.8 ([ROOT]/foo/rootcrate) -> v2.29.81
 [UPDATING] subcrate v2.29.8 ([ROOT]/foo/subcrate) -> v2.29.81
 
@@ -1190,7 +1188,7 @@ rustdns.workspace = true
     p.cargo("generate-lockfile")
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/rustdns`
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 
 "#]])
         .run();
@@ -1205,7 +1203,7 @@ rustdns.workspace = true
 
     p.cargo("update -p crate2")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [UPDATING] crate1 v2.29.8 ([ROOT]/foo/crate1) -> v2.29.81
 [UPDATING] crate2 v2.29.8 ([ROOT]/foo/crate2) -> v2.29.81
 
@@ -1280,7 +1278,7 @@ rustdns.workspace = true
     p.cargo("generate-lockfile")
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/rustdns`
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 
 "#]])
         .run();
@@ -1295,7 +1293,7 @@ rustdns.workspace = true
 
     p.cargo("update --workspace")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [UPDATING] crate1 v2.29.8 ([ROOT]/foo/crate1) -> v2.29.81
 [UPDATING] crate2 v2.29.8 ([ROOT]/foo/crate2) -> v2.29.81
 
@@ -1340,7 +1338,7 @@ fn update_precise_git_revisions() {
     p.cargo("fetch")
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/git`
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 
 "#]])
         .run();
@@ -1392,7 +1390,7 @@ fn update_precise_git_revisions() {
 
     // Now make a tag looks like an oid.
     // It requires a git fetch, as the oid cannot be found in preexisting git db.
-    let arbitrary_tag: String = std::iter::repeat('a').take(head_id.len()).collect();
+    let arbitrary_tag: String = "a".repeat(head_id.len());
     git::tag(&git_repo, &arbitrary_tag);
 
     p.cargo("update git --precise")
@@ -1438,7 +1436,8 @@ fn precise_yanked() {
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
 [WARNING] selected package `bar@0.1.1` was yanked by the author
-[NOTE] if possible, try a compatible non-yanked version
+  |
+  = [HELP] if possible, try a compatible non-yanked version
 [UPDATING] bar v0.1.0 -> v0.1.1
 
 "#]])
@@ -1478,7 +1477,8 @@ fn precise_yanked_multiple_presence() {
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
 [WARNING] selected package `bar@0.1.1` was yanked by the author
-[NOTE] if possible, try a compatible non-yanked version
+  |
+  = [HELP] if possible, try a compatible non-yanked version
 [UPDATING] bar v0.1.0 -> v0.1.1
 
 "#]])
@@ -1487,6 +1487,463 @@ fn precise_yanked_multiple_presence() {
     // Use yanked version.
     let lockfile = p.read_lockfile();
     assert!(lockfile.contains("\nname = \"bar\"\nversion = \"0.1.1\""));
+}
+
+/// This pins down today's behavior.
+/// Unsure if it is intended or an overlook or a bug.
+///
+/// When multiple SPECs share the same registry source,
+/// only the first SPEC ends up with `--precise` applied to it.
+/// Subsequent SPECs are silently ignored.
+#[cargo_test]
+fn precise_with_multiple_specs() {
+    Package::new("itoa", "1.0.0").publish();
+    Package::new("itoa", "1.0.18").publish();
+    Package::new("ryu", "1.0.0").publish();
+    Package::new("ryu", "1.0.20").publish();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.0.1"
+                edition = "2021"
+
+                [dependencies]
+                itoa = "1"
+                ryu = "1"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    p.cargo("generate-lockfile").run();
+    assert_e2e().eq(
+        p.read_lockfile(),
+        str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "foo"
+version = "0.0.1"
+dependencies = [
+ "itoa",
+ "ryu",
+]
+
+[[package]]
+name = "itoa"
+version = "1.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62fcbca7635e9d80f11bbaf7228ecda21ec8a8dda31639ea349d0e8f18cfece5"
+
+[[package]]
+name = "ryu"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c58775e7766a554ce9276a831ae7bd186a0cefe98e6ca5253adaf81e416a04a"
+
+"##]],
+    );
+
+    p.cargo("update -p itoa -p ryu --precise 1.0.0")
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[DOWNGRADING] itoa v1.0.18 -> v1.0.0
+
+"#]])
+        .run();
+
+    // First one pinned, second one unchanged.
+    assert_e2e().eq(
+        p.read_lockfile(),
+        str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "foo"
+version = "0.0.1"
+dependencies = [
+ "itoa",
+ "ryu",
+]
+
+[[package]]
+name = "itoa"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7c663bd72365149245549c8c5f2ea0fd68e7d6bf77e07ff186c251d1ea06eee9"
+
+[[package]]
+name = "ryu"
+version = "1.0.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c58775e7766a554ce9276a831ae7bd186a0cefe98e6ca5253adaf81e416a04a"
+
+"##]],
+    );
+
+    // Reversing the order picks the other one.
+    p.cargo("update -p ryu -p itoa --precise 1.0.0")
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[UPDATING] itoa v1.0.0 -> v1.0.18
+[DOWNGRADING] ryu v1.0.20 -> v1.0.0
+
+"#]])
+        .run();
+    assert_e2e().eq(
+        p.read_lockfile(),
+        str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "foo"
+version = "0.0.1"
+dependencies = [
+ "itoa",
+ "ryu",
+]
+
+[[package]]
+name = "itoa"
+version = "1.0.18"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "62fcbca7635e9d80f11bbaf7228ecda21ec8a8dda31639ea349d0e8f18cfece5"
+
+[[package]]
+name = "ryu"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "048ad12f2ed919c10236898c0914d92f143f3977c015fde2350b41c29779476f"
+
+"##]],
+    );
+}
+
+/// This pins down today's behavior.
+/// Unsure if it is intended or an overlook or a bug.
+///
+/// Like [`precise_with_multiple_specs`]
+/// but `--precise` only matches one of the two SPECs
+#[cargo_test]
+fn precise_with_multiple_specs_first_doesnt_match() {
+    Package::new("itoa", "1.0.0").publish();
+    Package::new("itoa", "1.0.1").publish();
+    Package::new("ryu", "2.0.0").publish();
+    Package::new("ryu", "2.0.1").publish();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.0.1"
+                edition = "2021"
+
+                [dependencies]
+                itoa = "1"
+                ryu = "2"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    p.cargo("generate-lockfile").run();
+    let lockfile_before = p.read_lockfile();
+
+    p.cargo("update -p itoa -p ryu --precise 2.0.0")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[ERROR] no matching package named `itoa` found
+location searched: `dummy-registry` index (which is replacing registry `crates-io`)
+required by package `foo v0.0.1 ([ROOT]/foo)`
+
+"#]])
+        .run();
+    // Lockfile unchanged.
+    assert_e2e().eq(p.read_lockfile(), lockfile_before);
+
+    // Reversing the order picks the other one.
+    p.cargo("update -p ryu -p itoa --precise 2.0.0")
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[DOWNGRADING] ryu v2.0.1 -> v2.0.0
+
+"#]])
+        .run();
+    assert_e2e().eq(
+        p.read_lockfile(),
+        str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "foo"
+version = "0.0.1"
+dependencies = [
+ "itoa",
+ "ryu",
+]
+
+[[package]]
+name = "itoa"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5add81e2ddd7af26283315392cde6e57361e43f0546078653d94107cd92df0d8"
+
+[[package]]
+name = "ryu"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abac7d6286c36aa99d7f6691c6802e3d77249866cc4966c8eb49a03945996cf6"
+
+"##]],
+    );
+}
+
+/// This pins down today's behavior when multiple specs live on different registries
+/// Unsure if it is intended or an overlook or a bug.
+#[cargo_test]
+fn precise_with_multiple_specs_cross_registry() {
+    registry::alt_init();
+    Package::new("reg", "1.0.0").publish();
+    Package::new("reg", "1.0.1").publish();
+    Package::new("alt", "1.0.0").alternative(true).publish();
+    Package::new("alt", "1.0.1").alternative(true).publish();
+    Package::new("reg2", "1.1.0").publish();
+    Package::new("reg2", "1.2.0").publish();
+    Package::new("alt2", "1.1.0").alternative(true).publish();
+    Package::new("alt2", "1.2.0").alternative(true).publish();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2021"
+
+                [dependencies]
+                reg = "1"
+                alt = { version = "1", registry = "alternative" }
+                reg2 = "1"
+                alt2 = { version = "1", registry = "alternative" }
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+    p.cargo("generate-lockfile").run();
+
+    assert_e2e().eq(
+        p.read_lockfile(),
+        str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "alt"
+version = "1.0.1"
+source = "registry+[ROOTURL]/alternative-registry"
+checksum = "4e902d03b37e49f6758c6f2b7d57c96e458774ba6c2607d480892ebe48b0a293"
+
+[[package]]
+name = "alt2"
+version = "1.2.0"
+source = "registry+[ROOTURL]/alternative-registry"
+checksum = "63dab2653af81cc9dd6c4308ed1808f13a219fa3043d8a16f36b4605f8df1293"
+
+[[package]]
+name = "foo"
+version = "0.0.0"
+dependencies = [
+ "alt",
+ "alt2",
+ "reg",
+ "reg2",
+]
+
+[[package]]
+name = "reg"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f2422bba45503c8f60ce4a35b8bb8ed55e8517e5c455883f7128b3363b3ba270"
+
+[[package]]
+name = "reg2"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c18cfe95beecfbe2d462deee1a87483f99d0254edbe80d247178953337ef075"
+
+"##]],
+    );
+
+    // Current behavior `--precise` update only what it matches and ignore others.
+    p.cargo("update -p reg -p alt -p reg2 -p alt2 --precise 1.0.0")
+        .with_stderr_data(str![[r#"
+[UPDATING] `alternative` index
+[UPDATING] `dummy-registry` index
+[DOWNGRADING] alt v1.0.1 (registry `alternative`) -> v1.0.0
+[DOWNGRADING] reg v1.0.1 -> v1.0.0
+
+"#]])
+        .run();
+
+    assert_e2e().eq(
+        p.read_lockfile(),
+        str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "alt"
+version = "1.0.0"
+source = "registry+[ROOTURL]/alternative-registry"
+checksum = "e93591c223908cfbc49f6026b0b75a6b02d3a0dbd4eb13e48d8f93276373fdea"
+
+[[package]]
+name = "alt2"
+version = "1.2.0"
+source = "registry+[ROOTURL]/alternative-registry"
+checksum = "63dab2653af81cc9dd6c4308ed1808f13a219fa3043d8a16f36b4605f8df1293"
+
+[[package]]
+name = "foo"
+version = "0.0.0"
+dependencies = [
+ "alt",
+ "alt2",
+ "reg",
+ "reg2",
+]
+
+[[package]]
+name = "reg"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c42cf712c9c99776d156b5bedefb8fe76378b89ca550ab4744e7d71e013095f0"
+
+[[package]]
+name = "reg2"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9c18cfe95beecfbe2d462deee1a87483f99d0254edbe80d247178953337ef075"
+
+"##]],
+    );
+}
+
+/// This pins down today's behavior.
+/// Unsure if it is intended or an overlook or a bug.
+///
+/// `[patch]` takes precedence over `--precise`,
+/// so `--precise` is a silent no-op.
+#[cargo_test]
+fn precise_with_patch() {
+    Package::new("bar", "1.0.0").publish();
+    Package::new("bar", "1.0.1").publish();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.0.1"
+                edition = "2021"
+
+                [dependencies]
+                bar = "1"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file(
+            "bar-patch/Cargo.toml",
+            r#"
+                [package]
+                name = "bar"
+                version = "1.0.2"
+                edition = "2021"
+            "#,
+        )
+        .file("bar-patch/src/lib.rs", "")
+        .build();
+
+    // baseline lockfile
+    p.cargo("generate-lockfile").run();
+    assert_e2e().eq(
+        p.read_lockfile(),
+        str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "bar"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a7c6055bfdbbce10824e6ab46111758e93a3b54089a3a14a1f5e9dc4dec1dfcd"
+
+[[package]]
+name = "foo"
+version = "0.0.1"
+dependencies = [
+ "bar",
+]
+
+"##]],
+    );
+
+    p.change_file(
+        "Cargo.toml",
+        r#"
+            [package]
+            name = "foo"
+            version = "0.0.1"
+            edition = "2021"
+
+            [dependencies]
+            bar = "1"
+
+            [patch.crates-io]
+            bar = { path = "bar-patch" }
+        "#,
+    );
+
+    // patch is applied
+    // `--precise` is no-op
+    p.cargo("update bar --precise 1.0.0").run();
+    assert_e2e().eq(
+        p.read_lockfile(),
+        str![[r##"
+# This file is automatically @generated by Cargo.
+# It is not intended for manual editing.
+version = 4
+
+[[package]]
+name = "bar"
+version = "1.0.2"
+
+[[package]]
+name = "foo"
+version = "0.0.1"
+dependencies = [
+ "bar",
+]
+
+"##]],
+    );
 }
 
 #[cargo_test]
@@ -1521,8 +1978,8 @@ fn report_behind() {
     p.cargo("update --dry-run")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 1 package to latest compatible version
-[UPDATING] breaking v0.1.0 -> v0.1.1 (latest: v0.2.0)
+[LOCKING] 1 package to highest compatible version
+[UPDATING] breaking v0.1.0 -> v0.1.1 (available: v0.2.0)
 [NOTE] pass `--verbose` to see 2 unchanged dependencies behind latest
 [WARNING] not updating lockfile due to dry run
 
@@ -1532,11 +1989,11 @@ fn report_behind() {
     p.cargo("update --dry-run --verbose")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 1 package to latest compatible version
-[UPDATING] breaking v0.1.0 -> v0.1.1 (latest: v0.2.0)
-[UNCHANGED] pre v1.0.0-alpha.0 (latest: v1.0.0-alpha.1)
-[UNCHANGED] two-ver v0.1.0 (latest: v0.2.0)
-[NOTE] to see how you depend on a package, run `cargo tree --invert --package <dep>@<ver>`
+[LOCKING] 1 package to highest compatible version
+[UPDATING] breaking v0.1.0 -> v0.1.1 (available: v0.2.0)
+[UNCHANGED] pre v1.0.0-alpha.0 (available: v1.0.0-alpha.1)
+[UNCHANGED] two-ver v0.1.0 (available: v0.2.0)
+[NOTE] to see how you depend on a package, run `cargo tree --invert <dep>@<ver>`
 [WARNING] not updating lockfile due to dry run
 
 "#]])
@@ -1547,7 +2004,7 @@ fn report_behind() {
     p.cargo("update --dry-run")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 0 packages to latest compatible versions
+[LOCKING] 0 packages to highest compatible versions
 [NOTE] pass `--verbose` to see 3 unchanged dependencies behind latest
 [WARNING] not updating lockfile due to dry run
 
@@ -1557,11 +2014,11 @@ fn report_behind() {
     p.cargo("update --dry-run --verbose")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 0 packages to latest compatible versions
-[UNCHANGED] breaking v0.1.1 (latest: v0.2.0)
-[UNCHANGED] pre v1.0.0-alpha.0 (latest: v1.0.0-alpha.1)
-[UNCHANGED] two-ver v0.1.0 (latest: v0.2.0)
-[NOTE] to see how you depend on a package, run `cargo tree --invert --package <dep>@<ver>`
+[LOCKING] 0 packages to highest compatible versions
+[UNCHANGED] breaking v0.1.1 (available: v0.2.0)
+[UNCHANGED] pre v1.0.0-alpha.0 (available: v1.0.0-alpha.1)
+[UNCHANGED] two-ver v0.1.0 (available: v0.2.0)
+[NOTE] to see how you depend on a package, run `cargo tree --invert <dep>@<ver>`
 [WARNING] not updating lockfile due to dry run
 
 "#]])
@@ -1597,7 +2054,7 @@ fn update_with_missing_feature() {
     p.cargo("update")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 0 packages to latest compatible versions
+[LOCKING] 0 packages to highest compatible versions
 [NOTE] pass `--verbose` to see 1 unchanged dependencies behind latest
 
 "#]])
@@ -1608,7 +2065,7 @@ fn update_with_missing_feature() {
     p.cargo("update")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 1 package to latest compatible version
+[LOCKING] 1 package to highest compatible version
 [UPDATING] bar v0.1.0 -> v0.1.2
 
 "#]])
@@ -1616,50 +2073,13 @@ fn update_with_missing_feature() {
 }
 
 #[cargo_test]
-fn update_breaking_unstable() {
+fn prefixed_v_in_version() {
+    Package::new("bar", "1.0.0").publish();
+
     let p = project()
         .file(
             "Cargo.toml",
             r#"
-                [package]
-                name  =  "foo"
-                version  =  "0.0.1"
-                edition  =  "2015"
-                authors  =  []
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
-
-    p.cargo("update --breaking")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_status(101)
-        .with_stderr_data(str![[r#"
-[ERROR] the `--breaking` flag is unstable, pass `-Z unstable-options` to enable it
-See https://github.com/rust-lang/cargo/issues/12425 for more information about the `--breaking` flag.
-
-"#]])
-        .run();
-}
-
-#[cargo_test]
-fn update_breaking_dry_run() {
-    Package::new("incompatible", "1.0.0").publish();
-    Package::new("ws", "1.0.0").publish();
-
-    let root_manifest = r#"
-        # Check if formatting is preserved. Nothing here should change, due to dry-run.
-
-        [workspace]
-        members  =  ["foo"]
-
-        [workspace.dependencies]
-        ws  =  "1.0"  # Preserve formatting
-    "#;
-
-    let crate_manifest = r#"
-        # Check if formatting is preserved. Nothing here should change, due to dry-run.
-
         [package]
         name  =  "foo"
         version  =  "0.0.1"
@@ -1667,952 +2087,25 @@ fn update_breaking_dry_run() {
         authors  =  []
 
         [dependencies]
-        incompatible  =  "1.0"  # Preserve formatting
-        ws.workspace  =  true  # Preserve formatting
-    "#;
-
-    let p = project()
-        .file("Cargo.toml", root_manifest)
-        .file("foo/Cargo.toml", crate_manifest)
-        .file("foo/src/lib.rs", "")
-        .build();
-
-    p.cargo("generate-lockfile").run();
-    let lock_file = p.read_file("Cargo.lock");
-
-    Package::new("incompatible", "1.0.1").publish();
-    Package::new("ws", "1.0.1").publish();
-
-    Package::new("incompatible", "2.0.0").publish();
-    Package::new("ws", "2.0.0").publish();
-
-    p.cargo("update -Zunstable-options --dry-run --breaking")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `dummy-registry` index
-[UPGRADING] incompatible ^1.0 -> ^2.0
-[UPGRADING] ws ^1.0 -> ^2.0
-[LOCKING] 2 packages to latest compatible versions
-[UPDATING] incompatible v1.0.0 -> v2.0.0
-[UPDATING] ws v1.0.0 -> v2.0.0
-[WARNING] aborting update due to dry run
-
-"#]])
-        .run();
-
-    let root_manifest_after = p.read_file("Cargo.toml");
-    assert_e2e().eq(&root_manifest_after, root_manifest);
-
-    let crate_manifest_after = p.read_file("foo/Cargo.toml");
-    assert_e2e().eq(&crate_manifest_after, crate_manifest);
-
-    let lock_file_after = p.read_file("Cargo.lock");
-    assert_e2e().eq(&lock_file_after, lock_file);
-}
-
-#[cargo_test]
-fn update_breaking() {
-    registry::alt_init();
-    Package::new("compatible", "1.0.0").publish();
-    Package::new("incompatible", "1.0.0").publish();
-    Package::new("pinned", "1.0.0").publish();
-    Package::new("less-than", "1.0.0").publish();
-    Package::new("renamed-from", "1.0.0").publish();
-    Package::new("pre-release", "1.0.0").publish();
-    Package::new("yanked", "1.0.0").publish();
-    Package::new("ws", "1.0.0").publish();
-    Package::new("shared", "1.0.0").publish();
-    Package::new("multiple-locations", "1.0.0").publish();
-    Package::new("multiple-versions", "1.0.0").publish();
-    Package::new("multiple-versions", "2.0.0").publish();
-    Package::new("alternative-1", "1.0.0")
-        .alternative(true)
-        .publish();
-    Package::new("alternative-2", "1.0.0")
-        .alternative(true)
-        .publish();
-    Package::new("bar", "1.0.0").alternative(true).publish();
-    Package::new("multiple-registries", "1.0.0").publish();
-    Package::new("multiple-registries", "2.0.0")
-        .alternative(true)
-        .publish();
-    Package::new("multiple-source-types", "1.0.0").publish();
-    Package::new("platform-specific", "1.0.0").publish();
-    Package::new("dev", "1.0.0").publish();
-    Package::new("build", "1.0.0").publish();
-
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                # Check if formatting is preserved
-
-                [workspace]
-                members  =  ["foo", "bar"]
-
-                [workspace.dependencies]
-                ws  =  "1.0"  # This line gets partially rewritten
-            "#,
-        )
-        .file(
-            "foo/Cargo.toml",
-            r#"
-                # Check if formatting is preserved
-
-                [package]
-                name  =  "foo"
-                version  =  "0.0.1"
-                edition  =  "2015"
-                authors  =  []
-
-                [dependencies]
-                compatible  =  "1.0"  # Comment
-                incompatible  =  "1.0"  # Comment
-                pinned  =  "=1.0"  # Comment
-                less-than  =  "<99.0"  # Comment
-                renamed-to  =  { package  =  "renamed-from", version  =  "1.0" }  # Comment
-                pre-release  =  "1.0"  # Comment
-                yanked  =  "1.0"  # Comment
-                ws.workspace  =  true  # Comment
-                shared  =  "1.0"  # Comment
-                multiple-locations  =  { path  =  "../multiple-locations", version  =  "1.0" }  # Comment
-                multiple-versions  =  "1.0"  # Comment
-                alternative-1  =  { registry  =  "alternative", version  =  "1.0" }  # Comment
-                multiple-registries  =  "1.0"  # Comment
-                bar  =  { path  =  "../bar", registry  =  "alternative", version  =  "1.0.0" }  # Comment
-                multiple-source-types  =  { path  =  "../multiple-source-types", version  =  "1.0.0" }  # Comment
-
-                [dependencies.alternative-2]  # Comment
-                version  =  "1.0"  # Comment
-                registry  =  "alternative"  # Comment
-
-                [target.'cfg(unix)'.dependencies]
-                platform-specific  =  "1.0"  # Comment
-
-                [dev-dependencies]
-                dev  =  "1.0"  # Comment
-
-                [build-dependencies]
-                build  =  "1.0"  # Comment
-            "#,
-        )
-        .file("foo/src/lib.rs", "")
-        .file(
-            "bar/Cargo.toml",
-            r#"
-                [package]
-                name = "bar"
-                version = "1.0.0"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                shared = "1.0"
-                multiple-versions = "2.0"
-                multiple-registries  =  { registry  =  "alternative", version  =  "2.0" }  # Comment
-                multiple-source-types  =  "1.0"  # Comment
-            "#,
-        )
-        .file("bar/src/lib.rs", "")
-        .file(
-            "multiple-locations/Cargo.toml",
-            r#"
-                [package]
-                name = "multiple-locations"
-                version = "1.0.0"
-                edition = "2015"
-                authors = []
-            "#,
-        )
-        .file("multiple-locations/src/lib.rs", "")
-        .file(
-            "multiple-source-types/Cargo.toml",
-            r#"
-                [package]
-                name = "multiple-source-types"
-                version = "1.0.0"
-                edition = "2015"
-                authors = []
-            "#,
-        )
-        .file("multiple-source-types/src/lib.rs", "")
-        .build();
-
-    p.cargo("generate-lockfile").run();
-
-    Package::new("compatible", "1.0.1").publish();
-    Package::new("incompatible", "1.0.1").publish();
-    Package::new("pinned", "1.0.1").publish();
-    Package::new("less-than", "1.0.1").publish();
-    Package::new("renamed-from", "1.0.1").publish();
-    Package::new("ws", "1.0.1").publish();
-    Package::new("multiple-locations", "1.0.1").publish();
-    Package::new("multiple-versions", "1.0.1").publish();
-    Package::new("multiple-versions", "2.0.1").publish();
-    Package::new("alternative-1", "1.0.1")
-        .alternative(true)
-        .publish();
-    Package::new("alternative-2", "1.0.1")
-        .alternative(true)
-        .publish();
-    Package::new("platform-specific", "1.0.1").publish();
-    Package::new("dev", "1.0.1").publish();
-    Package::new("build", "1.0.1").publish();
-
-    Package::new("incompatible", "2.0.0").publish();
-    Package::new("pinned", "2.0.0").publish();
-    Package::new("less-than", "2.0.0").publish();
-    Package::new("renamed-from", "2.0.0").publish();
-    Package::new("pre-release", "2.0.0-alpha").publish();
-    Package::new("yanked", "2.0.0").yanked(true).publish();
-    Package::new("ws", "2.0.0").publish();
-    Package::new("shared", "2.0.0").publish();
-    Package::new("multiple-locations", "2.0.0").publish();
-    Package::new("multiple-versions", "3.0.0").publish();
-    Package::new("alternative-1", "2.0.0")
-        .alternative(true)
-        .publish();
-    Package::new("alternative-2", "2.0.0")
-        .alternative(true)
-        .publish();
-    Package::new("bar", "2.0.0").alternative(true).publish();
-    Package::new("multiple-registries", "2.0.0").publish();
-    Package::new("multiple-registries", "3.0.0")
-        .alternative(true)
-        .publish();
-    Package::new("multiple-source-types", "2.0.0").publish();
-    Package::new("platform-specific", "2.0.0").publish();
-    Package::new("dev", "2.0.0").publish();
-    Package::new("build", "2.0.0").publish();
-
-    p.cargo("update -Zunstable-options --breaking")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `alternative` index
-[UPGRADING] multiple-registries ^2.0 -> ^3.0
-[UPDATING] `dummy-registry` index
-[UPGRADING] multiple-source-types ^1.0 -> ^2.0
-[UPGRADING] multiple-versions ^2.0 -> ^3.0
-[UPGRADING] shared ^1.0 -> ^2.0
-[UPGRADING] alternative-1 ^1.0 -> ^2.0
-[UPGRADING] alternative-2 ^1.0 -> ^2.0
-[UPGRADING] incompatible ^1.0 -> ^2.0
-[UPGRADING] multiple-registries ^1.0 -> ^2.0
-[UPGRADING] multiple-versions ^1.0 -> ^3.0
-[UPGRADING] ws ^1.0 -> ^2.0
-[UPGRADING] dev ^1.0 -> ^2.0
-[UPGRADING] build ^1.0 -> ^2.0
-[UPGRADING] platform-specific ^1.0 -> ^2.0
-[LOCKING] 12 packages to latest compatible versions
-[UPDATING] alternative-1 v1.0.0 (registry `alternative`) -> v2.0.0
-[UPDATING] alternative-2 v1.0.0 (registry `alternative`) -> v2.0.0
-[UPDATING] build v1.0.0 -> v2.0.0
-[UPDATING] dev v1.0.0 -> v2.0.0
-[UPDATING] incompatible v1.0.0 -> v2.0.0
-[UPDATING] multiple-registries v2.0.0 (registry `alternative`) -> v3.0.0
-[UPDATING] multiple-registries v1.0.0 -> v2.0.0
-[UPDATING] multiple-source-types v1.0.0 -> v2.0.0
-[ADDING] multiple-versions v3.0.0
-[UPDATING] platform-specific v1.0.0 -> v2.0.0
-[UPDATING] shared v1.0.0 -> v2.0.0
-[UPDATING] ws v1.0.0 -> v2.0.0
-
-"#]])
-        .run();
-
-    let root_manifest = p.read_file("Cargo.toml");
-    assert_e2e().eq(
-        &root_manifest,
-        str![[r#"
-
-                # Check if formatting is preserved
-
-                [workspace]
-                members  =  ["foo", "bar"]
-
-                [workspace.dependencies]
-                ws  =  "2.0"  # This line gets partially rewritten
-            "#]],
-    );
-
-    let foo_manifest = p.read_file("foo/Cargo.toml");
-
-    assert_e2e().eq(
-        &foo_manifest,
-        str![[r#"
-
-                # Check if formatting is preserved
-
-                [package]
-                name  =  "foo"
-                version  =  "0.0.1"
-                edition  =  "2015"
-                authors  =  []
-
-                [dependencies]
-                compatible  =  "1.0"  # Comment
-                incompatible  =  "2.0"  # Comment
-                pinned  =  "=1.0"  # Comment
-                less-than  =  "<99.0"  # Comment
-                renamed-to  =  { package  =  "renamed-from", version  =  "1.0" }  # Comment
-                pre-release  =  "1.0"  # Comment
-                yanked  =  "1.0"  # Comment
-                ws.workspace  =  true  # Comment
-                shared  =  "2.0"  # Comment
-                multiple-locations  =  { path  =  "../multiple-locations", version  =  "1.0" }  # Comment
-                multiple-versions  =  "3.0"  # Comment
-                alternative-1  =  { registry  =  "alternative", version  =  "2.0" }  # Comment
-                multiple-registries  =  "2.0"  # Comment
-                bar  =  { path  =  "../bar", registry  =  "alternative", version  =  "1.0.0" }  # Comment
-                multiple-source-types  =  { path  =  "../multiple-source-types", version  =  "1.0.0" }  # Comment
-
-                [dependencies.alternative-2]  # Comment
-                version  =  "2.0"  # Comment
-                registry  =  "alternative"  # Comment
-
-                [target.'cfg(unix)'.dependencies]
-                platform-specific  =  "2.0"  # Comment
-
-                [dev-dependencies]
-                dev  =  "2.0"  # Comment
-
-                [build-dependencies]
-                build  =  "2.0"  # Comment
-            "#]],
-    );
-
-    let bar_manifest = p.read_file("bar/Cargo.toml");
-
-    assert_e2e().eq(
-        &bar_manifest,
-        str![[r#"
-
-                [package]
-                name = "bar"
-                version = "1.0.0"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                shared = "2.0"
-                multiple-versions = "3.0"
-                multiple-registries  =  { registry  =  "alternative", version  =  "3.0" }  # Comment
-                multiple-source-types  =  "2.0"  # Comment
-            "#]],
-    );
-
-    p.cargo("update")
-        .with_stderr_data(str![[r#"
-[UPDATING] `alternative` index
-[UPDATING] `dummy-registry` index
-[LOCKING] 4 packages to latest compatible versions
-[UPDATING] compatible v1.0.0 -> v1.0.1
-[UPDATING] less-than v1.0.0 -> v2.0.0
-[UPDATING] pinned v1.0.0 -> v1.0.1 (latest: v2.0.0)
-[UPDATING] renamed-from v1.0.0 -> v1.0.1 (latest: v2.0.0)
-
-"#]])
-        .run();
-}
-
-#[cargo_test]
-fn update_breaking_specific_packages() {
-    Package::new("just-foo", "1.0.0")
-        .add_dep(Dependency::new("transitive-compatible", "1.0.0").build())
-        .add_dep(Dependency::new("transitive-incompatible", "1.0.0").build())
-        .publish();
-    Package::new("just-bar", "1.0.0").publish();
-    Package::new("shared", "1.0.0").publish();
-    Package::new("ws", "1.0.0").publish();
-    Package::new("transitive-compatible", "1.0.0").publish();
-    Package::new("transitive-incompatible", "1.0.0").publish();
-
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [workspace]
-                members = ["foo", "bar"]
-
-                [workspace.dependencies]
-                ws = "1.0"
-            "#,
-        )
-        .file(
-            "foo/Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                just-foo = "1.0"
-                shared = "1.0"
-                ws.workspace = true
-            "#,
-        )
-        .file("foo/src/lib.rs", "")
-        .file(
-            "bar/Cargo.toml",
-            r#"
-                [package]
-                name = "bar"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                just-bar = "1.0"
-                shared = "1.0"
-                ws.workspace = true
-            "#,
-        )
-        .file("bar/src/lib.rs", "")
-        .build();
-
-    p.cargo("generate-lockfile").run();
-
-    Package::new("just-foo", "1.0.1")
-        .add_dep(Dependency::new("transitive-compatible", "1.0.0").build())
-        .add_dep(Dependency::new("transitive-incompatible", "1.0.0").build())
-        .publish();
-    Package::new("just-bar", "1.0.1").publish();
-    Package::new("shared", "1.0.1").publish();
-    Package::new("ws", "1.0.1").publish();
-    Package::new("transitive-compatible", "1.0.1").publish();
-    Package::new("transitive-incompatible", "1.0.1").publish();
-
-    Package::new("just-foo", "2.0.0")
-        // Upgrading just-foo implies accepting an update of transitive-compatible.
-        .add_dep(Dependency::new("transitive-compatible", "1.0.1").build())
-        // Upgrading just-foo implies accepting a major update of transitive-incompatible.
-        .add_dep(Dependency::new("transitive-incompatible", "2.0.0").build())
-        .publish();
-    Package::new("just-bar", "2.0.0").publish();
-    Package::new("shared", "2.0.0").publish();
-    Package::new("ws", "2.0.0").publish();
-    Package::new("transitive-incompatible", "2.0.0").publish();
-
-    p.cargo("update -Zunstable-options --breaking just-foo shared ws")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `dummy-registry` index
-[UPGRADING] shared ^1.0 -> ^2.0
-[UPGRADING] ws ^1.0 -> ^2.0
-[UPGRADING] just-foo ^1.0 -> ^2.0
-[LOCKING] 5 packages to latest compatible versions
-[UPDATING] just-foo v1.0.0 -> v2.0.0
-[UPDATING] shared v1.0.0 -> v2.0.0
-[UPDATING] transitive-compatible v1.0.0 -> v1.0.1
-[UPDATING] transitive-incompatible v1.0.0 -> v2.0.0
-[UPDATING] ws v1.0.0 -> v2.0.0
-
-"#]])
-        .run();
-}
-
-#[cargo_test]
-fn update_breaking_specific_packages_that_wont_update() {
-    Package::new("compatible", "1.0.0").publish();
-    Package::new("renamed-from", "1.0.0").publish();
-    Package::new("non-semver", "1.0.0").publish();
-    Package::new("bar", "1.0.0")
-        .add_dep(Dependency::new("transitive-compatible", "1.0.0").build())
-        .add_dep(Dependency::new("transitive-incompatible", "1.0.0").build())
-        .publish();
-    Package::new("transitive-compatible", "1.0.0").publish();
-    Package::new("transitive-incompatible", "1.0.0").publish();
-
-    let crate_manifest = r#"
-        # Check if formatting is preserved
-
-        [package]
-        name  =  "foo"
-        version  =  "0.0.1"
-        edition  =  "2015"
-        authors  =  []
-
-        [dependencies]
-        compatible  =  "1.0"  # Comment
-        renamed-to  =  { package  =  "renamed-from", version  =  "1.0" }  # Comment
-        non-semver  =  "~1.0"  # Comment
-        bar  =  "1.0"  # Comment
-    "#;
-
-    let p = project()
-        .file("Cargo.toml", crate_manifest)
-        .file("src/lib.rs", "")
-        .build();
-
-    p.cargo("generate-lockfile").run();
-    let lock_file = p.read_file("Cargo.lock");
-
-    Package::new("compatible", "1.0.1").publish();
-    Package::new("renamed-from", "1.0.1").publish();
-    Package::new("non-semver", "1.0.1").publish();
-    Package::new("transitive-compatible", "1.0.1").publish();
-    Package::new("transitive-incompatible", "1.0.1").publish();
-
-    Package::new("renamed-from", "2.0.0").publish();
-    Package::new("non-semver", "2.0.0").publish();
-    Package::new("transitive-incompatible", "2.0.0").publish();
-
-    p.cargo("update -Zunstable-options --breaking compatible renamed-from non-semver transitive-compatible transitive-incompatible")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-
-"#]])
-        .run();
-
-    let crate_manifest_after = p.read_file("Cargo.toml");
-    assert_e2e().eq(&crate_manifest_after, crate_manifest);
-
-    let lock_file_after = p.read_file("Cargo.lock");
-    assert_e2e().eq(&lock_file_after, lock_file);
-
-    p.cargo(
-        "update compatible renamed-from non-semver transitive-compatible transitive-incompatible",
-    )
-    .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-[LOCKING] 5 packages to latest compatible versions
-[UPDATING] compatible v1.0.0 -> v1.0.1
-[UPDATING] non-semver v1.0.0 -> v1.0.1 (latest: v2.0.0)
-[UPDATING] renamed-from v1.0.0 -> v1.0.1 (latest: v2.0.0)
-[UPDATING] transitive-compatible v1.0.0 -> v1.0.1
-[UPDATING] transitive-incompatible v1.0.0 -> v1.0.1 (latest: v2.0.0)
-
-"#]])
-    .run();
-}
-
-#[cargo_test]
-fn update_breaking_without_lock_file() {
-    Package::new("compatible", "1.0.0").publish();
-    Package::new("incompatible", "1.0.0").publish();
-
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-            [package]
-            name  =  "foo"
-            version  =  "0.0.1"
-            edition  =  "2015"
-            authors  =  []
-
-            [dependencies]
-            compatible  =  "1.0"  # Comment
-            incompatible  =  "1.0"  # Comment
-        "#,
-        )
-        .file("src/lib.rs", "")
-        .build();
-
-    Package::new("compatible", "1.0.1").publish();
-    Package::new("incompatible", "1.0.1").publish();
-
-    Package::new("incompatible", "2.0.0").publish();
-
-    p.cargo("update -Zunstable-options --breaking")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-[UPGRADING] incompatible ^1.0 -> ^2.0
-[LOCKING] 3 packages to latest compatible versions
-
-"#]])
-        .run();
-}
-
-#[cargo_test]
-fn update_breaking_spec_version() {
-    Package::new("compatible", "1.0.0").publish();
-    Package::new("incompatible", "1.0.0").publish();
-
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-            [package]
-            name  =  "foo"
-            version  =  "0.0.1"
-            edition  =  "2015"
-            authors  =  []
-
-            [dependencies]
-            compatible  =  "1.0"  # Comment
-            incompatible  =  "1.0"  # Comment
-        "#,
+        bar = "1.0.0"
+    "#,
         )
         .file("src/lib.rs", "")
         .build();
 
     p.cargo("generate-lockfile").run();
 
-    Package::new("compatible", "1.0.1").publish();
-    Package::new("incompatible", "1.0.1").publish();
-
-    Package::new("incompatible", "2.0.0").publish();
-
-    // Invalid spec
-    p.cargo("update -Zunstable-options --breaking incompatible@foo")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
+    Package::new("bar", "1.0.1").publish();
+    p.cargo("update bar --precise v1.0.1")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] expected a version like "1.32"
+[ERROR] the version provided, `v1.0.1` is not a valid SemVer version
+
+[HELP] try changing the version to `1.0.1`
+
+Caused by:
+  unexpected character 'v' while parsing major version number
 
 "#]])
         .run();
-
-    // Spec version not matching our current dependencies
-    p.cargo("update -Zunstable-options --breaking incompatible@2.0.0")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#""#]])
-        .run();
-
-    // Spec source not matching our current dependencies
-    p.cargo("update -Zunstable-options --breaking https://alternative.com#incompatible@1.0.0")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#""#]])
-        .run();
-
-    // Accepted spec
-    p.cargo("update -Zunstable-options --breaking incompatible@1.0.0")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-[UPGRADING] incompatible ^1.0 -> ^2.0
-[LOCKING] 1 package to latest compatible version
-[UPDATING] incompatible v1.0.0 -> v2.0.0
-
-"#]])
-        .run();
-
-    // Accepted spec, full format
-    Package::new("incompatible", "3.0.0").publish();
-    p.cargo("update -Zunstable-options --breaking https://github.com/rust-lang/crates.io-index#incompatible@2.0.0")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-[UPGRADING] incompatible ^2.0 -> ^3.0
-[LOCKING] 1 package to latest compatible version
-[UPDATING] incompatible v2.0.0 -> v3.0.0
-
-"#]])
-        .run();
-
-    // Spec matches a dependency that will not be upgraded
-    p.cargo("update -Zunstable-options --breaking compatible@1.0.0")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-
-"#]])
-        .run();
-
-    // Non-existing versions
-    p.cargo("update -Zunstable-options --breaking incompatible@9.0.0")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#""#]])
-        .run();
-
-    p.cargo("update -Zunstable-options --breaking compatible@9.0.0")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#""#]])
-        .run();
-}
-
-#[cargo_test]
-fn update_breaking_spec_version_transitive() {
-    Package::new("dep", "1.0.0").publish();
-    Package::new("dep", "1.1.0").publish();
-
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-                name  =  "foo"
-                version  =  "0.0.1"
-                edition  =  "2015"
-                authors  =  []
-
-                [dependencies]
-                dep  =  "1.0"
-                bar = { path = "bar", version = "0.0.1" }
-            "#,
-        )
-        .file("src/lib.rs", "")
-        .file(
-            "bar/Cargo.toml",
-            r#"
-                [package]
-                name  =  "bar"
-                version  =  "0.0.1"
-                edition  =  "2015"
-                authors  =  []
-
-                [dependencies]
-                dep  =  "1.1"
-            "#,
-        )
-        .file("bar/src/lib.rs", "")
-        .build();
-
-    p.cargo("generate-lockfile").run();
-
-    Package::new("dep", "1.1.1").publish();
-    Package::new("dep", "2.0.0").publish();
-
-    // Will upgrade the direct dependency
-    p.cargo("update -Zunstable-options --breaking dep@1.0")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-[UPGRADING] dep ^1.0 -> ^2.0
-[LOCKING] 1 package to latest compatible version
-[ADDING] dep v2.0.0
-
-"#]])
-        .run();
-
-    // But not the transitive one, because bar is not a workspace member
-    p.cargo("update -Zunstable-options --breaking dep@1.1")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-
-"#]])
-        .run();
-
-    // A non-breaking update is different, as it will update transitive dependencies
-    p.cargo("update dep@1.1")
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-[LOCKING] 1 package to latest compatible version
-[UPDATING] dep v1.1.0 -> v1.1.1 (latest: v2.0.0)
-
-"#]])
-        .run();
-}
-
-#[cargo_test]
-fn update_breaking_mixed_compatibility() {
-    Package::new("mixed-compatibility", "1.0.0").publish();
-    Package::new("mixed-compatibility", "2.0.0").publish();
-
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [workspace]
-                members = ["foo", "bar"]
-            "#,
-        )
-        .file(
-            "foo/Cargo.toml",
-            r#"
-                [package]
-                name = "foo"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                mixed-compatibility = "1.0"
-            "#,
-        )
-        .file("foo/src/lib.rs", "")
-        .file(
-            "bar/Cargo.toml",
-            r#"
-                [package]
-                name = "bar"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                mixed-compatibility = "2.0"
-            "#,
-        )
-        .file("bar/src/lib.rs", "")
-        .build();
-
-    p.cargo("generate-lockfile").run();
-
-    Package::new("mixed-compatibility", "2.0.1").publish();
-
-    p.cargo("update -Zunstable-options --breaking")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-[UPGRADING] mixed-compatibility ^1.0 -> ^2.0
-[LOCKING] 1 package to latest compatible version
-[ADDING] mixed-compatibility v2.0.1
-
-"#]])
-        .run();
-}
-
-#[cargo_test]
-fn update_breaking_mixed_pinning_renaming() {
-    Package::new("mixed-pinned", "1.0.0").publish();
-    Package::new("mixed-ws-pinned", "1.0.0").publish();
-    Package::new("renamed-from", "1.0.0").publish();
-
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [workspace]
-                members = ["pinned", "unpinned", "mixed"]
-
-                [workspace.dependencies]
-                mixed-ws-pinned = "=1.0"
-            "#,
-        )
-        .file(
-            "pinned/Cargo.toml",
-            r#"
-                [package]
-                name = "pinned"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                mixed-pinned = "=1.0"
-                mixed-ws-pinned.workspace = true
-                renamed-to = { package = "renamed-from", version = "1.0" }
-            "#,
-        )
-        .file("pinned/src/lib.rs", "")
-        .file(
-            "unpinned/Cargo.toml",
-            r#"
-                [package]
-                name = "unpinned"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                mixed-pinned = "1.0"
-                mixed-ws-pinned = "1.0"
-                renamed-from = "1.0"
-            "#,
-        )
-        .file("unpinned/src/lib.rs", "")
-        .file(
-            "mixed/Cargo.toml",
-            r#"
-                [package]
-                name = "mixed"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [target.'cfg(windows)'.dependencies]
-                mixed-pinned = "1.0"
-
-                [target.'cfg(unix)'.dependencies]
-                mixed-pinned = "=1.0"
-            "#,
-        )
-        .file("mixed/src/lib.rs", "")
-        .build();
-
-    p.cargo("generate-lockfile").run();
-
-    Package::new("mixed-pinned", "2.0.0").publish();
-    Package::new("mixed-ws-pinned", "2.0.0").publish();
-    Package::new("renamed-from", "2.0.0").publish();
-
-    p.cargo("update -Zunstable-options --breaking")
-        .masquerade_as_nightly_cargo(&["update-breaking"])
-        .with_stderr_data(str![[r#"
-[UPDATING] `[..]` index
-[UPGRADING] mixed-pinned ^1.0 -> ^2.0
-[UPGRADING] mixed-ws-pinned ^1.0 -> ^2.0
-[UPGRADING] renamed-from ^1.0 -> ^2.0
-[LOCKING] 3 packages to latest compatible versions
-[ADDING] mixed-pinned v2.0.0
-[ADDING] mixed-ws-pinned v2.0.0
-[ADDING] renamed-from v2.0.0
-
-"#]])
-        .run();
-
-    let root_manifest = p.read_file("Cargo.toml");
-    assert_e2e().eq(
-        &root_manifest,
-        str![[r#"
-
-                [workspace]
-                members = ["pinned", "unpinned", "mixed"]
-
-                [workspace.dependencies]
-                mixed-ws-pinned = "=1.0"
-            "#]],
-    );
-
-    let pinned_manifest = p.read_file("pinned/Cargo.toml");
-    assert_e2e().eq(
-        &pinned_manifest,
-        str![[r#"
-
-                [package]
-                name = "pinned"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                mixed-pinned = "=1.0"
-                mixed-ws-pinned.workspace = true
-                renamed-to = { package = "renamed-from", version = "1.0" }
-            "#]],
-    );
-
-    let unpinned_manifest = p.read_file("unpinned/Cargo.toml");
-    assert_e2e().eq(
-        &unpinned_manifest,
-        str![[r#"
-
-                [package]
-                name = "unpinned"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [dependencies]
-                mixed-pinned = "2.0"
-                mixed-ws-pinned = "2.0"
-                renamed-from = "2.0"
-            "#]],
-    );
-
-    let mixed_manifest = p.read_file("mixed/Cargo.toml");
-    assert_e2e().eq(
-        &mixed_manifest,
-        str![[r#"
-
-                [package]
-                name = "mixed"
-                version = "0.0.1"
-                edition = "2015"
-                authors = []
-
-                [target.'cfg(windows)'.dependencies]
-                mixed-pinned = "2.0"
-
-                [target.'cfg(unix)'.dependencies]
-                mixed-pinned = "=1.0"
-            "#]],
-    );
 }

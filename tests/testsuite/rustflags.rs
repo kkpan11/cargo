@@ -2,9 +2,12 @@
 
 use std::fs;
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::registry::Package;
-use cargo_test_support::{basic_manifest, paths, project, project_in_home, rustc_host, str};
+use cargo_test_support::{
+    RawOutput, basic_manifest, paths, project, project_in_home, rustc_host, str,
+};
+use snapbox::assert_data_eq;
 
 #[cargo_test]
 fn env_rustflags_normal_source() {
@@ -259,7 +262,7 @@ fn env_rustflags_build_script_with_target() {
 #[cargo_test]
 fn env_rustflags_build_script_with_target_doesnt_apply_to_host_kind() {
     // RUSTFLAGS should *not* be passed to rustc for build scripts when --target is specified as the
-    // host triple even if target-applies-to-host-kind is enabled, to match legacy Cargo behavior.
+    // host tuple even if target-applies-to-host-kind is enabled, to match legacy Cargo behavior.
     let p = project()
         .file(
             "Cargo.toml",
@@ -967,7 +970,7 @@ fn build_rustflags_for_build_scripts() {
         .file(
             "build.rs",
             r#"
-                fn main() { assert!(cfg!(foo)); }
+                fn main() { assert!(cfg!(foo), "CFG FOO!"); }
             "#,
         )
         .file(
@@ -986,12 +989,7 @@ fn build_rustflags_for_build_scripts() {
     p.cargo("check --target")
         .arg(host)
         .with_status(101)
-        .with_stderr_data(str![[r#"
-...
-  assertion failed: cfg!(foo)
-  [NOTE] run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-"#]])
+        .with_stderr_data("...\n[..]CFG FOO![..]\n...")
         .run();
 
     // Enabling -Ztarget-applies-to-host should not make a difference without the config setting
@@ -1004,12 +1002,7 @@ fn build_rustflags_for_build_scripts() {
         .masquerade_as_nightly_cargo(&["target-applies-to-host"])
         .arg("-Ztarget-applies-to-host")
         .with_status(101)
-        .with_stderr_data(str![[r#"
-...
-  assertion failed: cfg!(foo)
-  [NOTE] run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-"#]])
+        .with_stderr_data("...\n[..]CFG FOO![..]\n...")
         .run();
 
     // When set to false though, the "proper" behavior where host artifacts _only_ pick up on
@@ -1027,24 +1020,14 @@ fn build_rustflags_for_build_scripts() {
         .masquerade_as_nightly_cargo(&["target-applies-to-host"])
         .arg("-Ztarget-applies-to-host")
         .with_status(101)
-        .with_stderr_data(str![[r#"
-...
-  assertion failed: cfg!(foo)
-  [NOTE] run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-"#]])
+        .with_stderr_data("...\n[..]CFG FOO![..]\n...")
         .run();
     p.cargo("check --target")
         .arg(host)
         .masquerade_as_nightly_cargo(&["target-applies-to-host"])
         .arg("-Ztarget-applies-to-host")
         .with_status(101)
-        .with_stderr_data(str![[r#"
-...
-  assertion failed: cfg!(foo)
-  [NOTE] run with `RUST_BACKTRACE=1` environment variable to display a backtrace
-
-"#]])
+        .with_stderr_data("...\n[..]CFG FOO![..]\n...")
         .run();
 }
 
@@ -1183,7 +1166,7 @@ fn cfg_rustflags_normal_source() {
     p.cargo("build --lib -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name foo [..] --cfg bar`
+[RUNNING] `rustc --crate-name foo [..] --cfg bar[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1192,7 +1175,7 @@ fn cfg_rustflags_normal_source() {
     p.cargo("build --bin=a -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name a [..] --cfg bar`
+[RUNNING] `rustc --crate-name a [..] --cfg bar[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1201,7 +1184,7 @@ fn cfg_rustflags_normal_source() {
     p.cargo("build --example=b -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name b [..] --cfg bar`
+[RUNNING] `rustc --crate-name b [..] --cfg bar[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1210,13 +1193,13 @@ fn cfg_rustflags_normal_source() {
     p.cargo("test --no-run -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc [..] --cfg bar`
-[RUNNING] `rustc [..] --cfg bar`
-[RUNNING] `rustc [..] --cfg bar`
+[RUNNING] `rustc [..] --cfg bar[..]`
+[RUNNING] `rustc [..] --cfg bar[..]`
+[RUNNING] `rustc [..] --cfg bar[..]`
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[EXECUTABLE] `[ROOT]/foo/target/debug/deps/foo-[HASH][EXE]`
-[EXECUTABLE] `[ROOT]/foo/target/debug/deps/a-[HASH][EXE]`
-[EXECUTABLE] `[ROOT]/foo/target/debug/deps/c-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/debug/build/foo/[HASH]/out/foo-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/debug/build/foo/[HASH]/out/a-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/debug/build/foo/[HASH]/out/c-[HASH][EXE]`
 
 "#]])
         .run();
@@ -1224,12 +1207,12 @@ fn cfg_rustflags_normal_source() {
     p.cargo("bench --no-run -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc [..] --cfg bar`
-[RUNNING] `rustc [..] --cfg bar`
-[RUNNING] `rustc [..] --cfg bar`
+[RUNNING] `rustc [..] --cfg bar[..]`
+[RUNNING] `rustc [..] --cfg bar[..]`
+[RUNNING] `rustc [..] --cfg bar[..]`
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[EXECUTABLE] `[ROOT]/foo/target/release/deps/foo-[HASH][EXE]`
-[EXECUTABLE] `[ROOT]/foo/target/release/deps/a-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/release/build/foo/[HASH]/out/foo-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/release/build/foo/[HASH]/out/a-[HASH][EXE]`
 
 "#]])
         .run();
@@ -1265,7 +1248,7 @@ fn cfg_rustflags_precedence() {
     p.cargo("build --lib -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name foo [..] --cfg bar`
+[RUNNING] `rustc --crate-name foo [..] --cfg bar[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1274,7 +1257,7 @@ fn cfg_rustflags_precedence() {
     p.cargo("build --bin=a -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name a [..] --cfg bar`
+[RUNNING] `rustc --crate-name a [..] --cfg bar[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1283,7 +1266,7 @@ fn cfg_rustflags_precedence() {
     p.cargo("build --example=b -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name b [..] --cfg bar`
+[RUNNING] `rustc --crate-name b [..] --cfg bar[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1292,13 +1275,13 @@ fn cfg_rustflags_precedence() {
     p.cargo("test --no-run -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc [..] --cfg bar`
-[RUNNING] `rustc [..] --cfg bar`
-[RUNNING] `rustc [..] --cfg bar`
+[RUNNING] `rustc [..] --cfg bar[..]`
+[RUNNING] `rustc [..] --cfg bar[..]`
+[RUNNING] `rustc [..] --cfg bar[..]`
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[EXECUTABLE] `[ROOT]/foo/target/debug/deps/foo-[HASH][EXE]`
-[EXECUTABLE] `[ROOT]/foo/target/debug/deps/a-[HASH][EXE]`
-[EXECUTABLE] `[ROOT]/foo/target/debug/deps/c-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/debug/build/foo/[HASH]/out/foo-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/debug/build/foo/[HASH]/out/a-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/debug/build/foo/[HASH]/out/c-[HASH][EXE]`
 
 "#]])
         .run();
@@ -1306,12 +1289,12 @@ fn cfg_rustflags_precedence() {
     p.cargo("bench --no-run -v")
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc [..] --cfg bar`
-[RUNNING] `rustc [..] --cfg bar`
-[RUNNING] `rustc [..] --cfg bar`
+[RUNNING] `rustc [..] --cfg bar[..]`
+[RUNNING] `rustc [..] --cfg bar[..]`
+[RUNNING] `rustc [..] --cfg bar[..]`
 [FINISHED] `bench` profile [optimized] target(s) in [ELAPSED]s
-[EXECUTABLE] `[ROOT]/foo/target/release/deps/foo-[HASH][EXE]`
-[EXECUTABLE] `[ROOT]/foo/target/release/deps/a-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/release/build/foo/[HASH]/out/foo-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/release/build/foo/[HASH]/out/a-[HASH][EXE]`
 
 "#]])
         .run();
@@ -1333,7 +1316,7 @@ fn target_rustflags_string_and_array_form1() {
     p1.cargo("check -v")
         .with_stderr_data(str![[r#"
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name foo [..] --cfg foo`
+[RUNNING] `rustc --crate-name foo [..] --cfg foo[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1353,7 +1336,7 @@ fn target_rustflags_string_and_array_form1() {
     p2.cargo("check -v")
         .with_stderr_data(str![[r#"
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name foo [..] --cfg foo`
+[RUNNING] `rustc --crate-name foo [..] --cfg foo[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1379,7 +1362,7 @@ fn target_rustflags_string_and_array_form2() {
     p1.cargo("check -v")
         .with_stderr_data(str![[r#"
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name foo [..] --cfg foo`
+[RUNNING] `rustc --crate-name foo [..] --cfg foo[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1402,7 +1385,7 @@ fn target_rustflags_string_and_array_form2() {
     p2.cargo("check -v")
         .with_stderr_data(str![[r#"
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name foo [..] --cfg foo`
+[RUNNING] `rustc --crate-name foo [..] --cfg foo[..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1458,12 +1441,12 @@ fn env_rustflags_misspelled() {
     for cmd in &["check", "build", "run", "test", "bench"] {
         p.cargo(cmd)
             .env("RUST_FLAGS", "foo")
-            .with_stderr_data(
-                "\
-[WARNING] Cargo does not read `RUST_FLAGS` environment variable. Did you mean `RUSTFLAGS`?
+            .with_stderr_data(str![[r#"
+[WARNING] ignoring environment variable `RUST_FLAGS`
+  |
+  = [HELP] rust flags are passed via `RUSTFLAGS`
 ...
-",
-            )
+"#]])
             .run();
     }
 }
@@ -1488,46 +1471,14 @@ fn env_rustflags_misspelled_build_script() {
     p.cargo("check")
         .env("RUST_FLAGS", "foo")
         .with_stderr_data(str![[r#"
-[WARNING] Cargo does not read `RUST_FLAGS` environment variable. Did you mean `RUSTFLAGS`?
+[WARNING] ignoring environment variable `RUST_FLAGS`
+  |
+  = [HELP] rust flags are passed via `RUSTFLAGS`
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
         .run();
-}
-
-#[cargo_test]
-fn remap_path_prefix_ignored() {
-    // Ensure that --remap-path-prefix does not affect metadata hash.
-    let p = project().file("src/lib.rs", "").build();
-    p.cargo("build").run();
-    let rlibs = p
-        .glob("target/debug/deps/*.rlib")
-        .collect::<Result<Vec<_>, _>>()
-        .unwrap();
-    assert_eq!(rlibs.len(), 1);
-    p.cargo("clean").run();
-
-    let check_metadata_same = || {
-        let rlibs2 = p
-            .glob("target/debug/deps/*.rlib")
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(rlibs, rlibs2);
-    };
-
-    p.cargo("build")
-        .env(
-            "RUSTFLAGS",
-            "--remap-path-prefix=/abc=/zoo --remap-path-prefix /spaced=/zoo",
-        )
-        .run();
-    check_metadata_same();
-
-    p.cargo("clean").run();
-    p.cargo("rustc -- --remap-path-prefix=/abc=/zoo --remap-path-prefix /spaced=/zoo")
-        .run();
-    check_metadata_same();
 }
 
 #[cargo_test]
@@ -1569,6 +1520,142 @@ fn remap_path_prefix_works() {
 
 "#]])
         .run();
+}
+
+#[cargo_test]
+fn rustflags_remap_path_prefix_ignored_for_c_metadata() {
+    let p = project().file("src/lib.rs", "").build();
+
+    let build_output = p
+        .cargo("build -v")
+        .env(
+            "RUSTFLAGS",
+            "--remap-path-prefix=/abc=/zoo --remap-path-prefix /spaced=/zoo",
+        )
+        .run();
+    let first_c_metadata = dbg!(get_c_metadata(build_output));
+
+    p.cargo("clean").run();
+
+    let build_output = p
+        .cargo("build -v")
+        .env(
+            "RUSTFLAGS",
+            "--remap-path-prefix=/def=/zoo --remap-path-prefix /earth=/zoo",
+        )
+        .run();
+    let second_c_metadata = dbg!(get_c_metadata(build_output));
+
+    assert_data_eq!(first_c_metadata, second_c_metadata);
+}
+
+#[cargo_test]
+fn rustc_remap_path_prefix_ignored_for_c_metadata() {
+    let p = project().file("src/lib.rs", "").build();
+
+    let build_output = p
+        .cargo("rustc -v -- --remap-path-prefix=/abc=/zoo --remap-path-prefix /spaced=/zoo")
+        .run();
+    let first_c_metadata = dbg!(get_c_metadata(build_output));
+
+    p.cargo("clean").run();
+
+    let build_output = p
+        .cargo("rustc -v -- --remap-path-prefix=/def=/zoo --remap-path-prefix /earth=/zoo")
+        .run();
+    let second_c_metadata = dbg!(get_c_metadata(build_output));
+
+    assert_data_eq!(first_c_metadata, second_c_metadata);
+}
+
+// `--remap-path-prefix` is meant to take two different binaries and make them the same but the
+// rlib name, including `-Cextra-filename`, can still end up in the binary so it can't change
+#[cargo_test]
+fn rustflags_remap_path_prefix_ignored_for_c_extra_filename() {
+    let p = project().file("src/lib.rs", "").build();
+
+    let build_output = p
+        .cargo("build -v")
+        .env(
+            "RUSTFLAGS",
+            "--remap-path-prefix=/abc=/zoo --remap-path-prefix /spaced=/zoo",
+        )
+        .run();
+    let first_c_extra_filename = dbg!(get_c_extra_filename(build_output));
+
+    p.cargo("clean").run();
+
+    let build_output = p
+        .cargo("build -v")
+        .env(
+            "RUSTFLAGS",
+            "--remap-path-prefix=/def=/zoo --remap-path-prefix /earth=/zoo",
+        )
+        .run();
+    let second_c_extra_filename = dbg!(get_c_extra_filename(build_output));
+
+    assert_data_eq!(first_c_extra_filename, second_c_extra_filename);
+}
+
+// `--remap-path-prefix` is meant to take two different binaries and make them the same but the
+// rlib name, including `-Cextra-filename`, can still end up in the binary so it can't change
+#[cargo_test]
+fn rustc_remap_path_prefix_ignored_for_c_extra_filename() {
+    let p = project().file("src/lib.rs", "").build();
+
+    let build_output = p
+        .cargo("rustc -v -- --remap-path-prefix=/abc=/zoo --remap-path-prefix /spaced=/zoo")
+        .run();
+    let first_c_extra_filename = dbg!(get_c_extra_filename(build_output));
+
+    p.cargo("clean").run();
+
+    let build_output = p
+        .cargo("rustc -v -- --remap-path-prefix=/def=/zoo --remap-path-prefix /earth=/zoo")
+        .run();
+    let second_c_extra_filename = dbg!(get_c_extra_filename(build_output));
+
+    assert_data_eq!(first_c_extra_filename, second_c_extra_filename);
+}
+
+fn get_c_metadata(output: RawOutput) -> String {
+    let get_c_metadata_re =
+        regex::Regex::new(r".* (--crate-name [^ ]+).* (-C ?metadata=[^ ]+).*").unwrap();
+
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let mut c_metadata = get_c_metadata_re
+        .captures_iter(&stderr)
+        .map(|c| {
+            let (_, [name, c_metadata]) = c.extract();
+            format!("{name} {c_metadata}")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !c_metadata.is_empty(),
+        "`{get_c_metadata_re:?}` did not match:\n```\n{stderr}\n```"
+    );
+    c_metadata.sort();
+    c_metadata.join("\n")
+}
+
+fn get_c_extra_filename(output: RawOutput) -> String {
+    let get_c_extra_filename_re =
+        regex::Regex::new(r".* (--crate-name [^ ]+).* (-C ?extra-filename=[^ ]+).*").unwrap();
+
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    let mut c_extra_filename = get_c_extra_filename_re
+        .captures_iter(&stderr)
+        .map(|c| {
+            let (_, [name, c_extra_filename]) = c.extract();
+            format!("{name} {c_extra_filename}")
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        !c_extra_filename.is_empty(),
+        "`{get_c_extra_filename_re:?}` did not match:\n```\n{stderr}\n```"
+    );
+    c_extra_filename.sort();
+    c_extra_filename.join("\n")
 }
 
 #[cargo_test]
@@ -1639,6 +1726,72 @@ fn target_applies_to_host_rustdocflags_works() {
             "[DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
 [ERROR] flag passed
 ...",
+        )
+        .run();
+}
+
+#[cargo_test]
+fn host_config_shared_build_dep() {
+    // rust-lang/cargo#14253
+    Package::new("cc", "1.0.0").publish();
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+            [package]
+            name = "bootstrap"
+            edition = "2021"
+
+            [dependencies]
+            cc = "1.0.0"
+
+            [build-dependencies]
+            cc = "1.0.0"
+
+            [profile.dev]
+            debug = 0
+
+            [lints.cargo]
+            default = "allow"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file("build.rs", "fn main() {}")
+        .file(
+            ".cargo/config.toml",
+            "
+            target-applies-to-host=false
+
+            [host]
+            rustflags = ['--cfg', 'from_host']
+
+            [build]
+            rustflags = ['--cfg', 'from_target']
+            ",
+        )
+        .build();
+
+    p.cargo("build -v")
+        .masquerade_as_nightly_cargo(&["target-applies-to-host"])
+        .arg("-Ztarget-applies-to-host")
+        .arg("-Zhost-config")
+        .with_stderr_data(
+            str![[r#"
+[UPDATING] `dummy-registry` index
+[LOCKING] 1 package to highest compatible version
+[DOWNLOADING] crates ...
+[DOWNLOADED] cc v1.0.0 (registry `dummy-registry`)
+[COMPILING] cc v1.0.0
+[RUNNING] `rustc --crate-name cc [..]--cfg from_host[..]`
+[RUNNING] `rustc --crate-name cc [..]--cfg from_target[..]`
+[COMPILING] bootstrap v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustc --crate-name build_script_build [..]--cfg from_host[..]`
+[RUNNING] `[ROOT]/foo/target/debug/build/bootstrap/[HASH]/out/build_script_build`
+[RUNNING] `rustc --crate-name bootstrap[..]--cfg from_target[..]`
+[FINISHED] `dev` profile [unoptimized] target(s) in [ELAPSED]s
+
+"#]]
+            .unordered(),
         )
         .run();
 }

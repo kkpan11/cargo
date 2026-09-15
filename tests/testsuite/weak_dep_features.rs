@@ -2,8 +2,7 @@
 
 use std::fmt::Write;
 
-use cargo_test_support::paths::CargoPathExt;
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::registry::{Dependency, Package, RegistryBuilder};
 use cargo_test_support::str;
 use cargo_test_support::{project, publish};
@@ -45,6 +44,9 @@ fn simple() {
 
                 [features]
                 f1 = ["bar?/feat"]
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", &require(&["f1"], &[]))
@@ -55,7 +57,7 @@ fn simple() {
     p.cargo("check --features f1")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
@@ -101,26 +103,32 @@ fn deferred() {
                 [dependencies]
                 dep = { version = "1.0", features = ["feat"] }
                 bar_activator = "1.0"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
         .build();
 
     p.cargo("check")
-        .with_stderr_data(str![[r#"
+        .with_stderr_data(
+            str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 4 packages to latest compatible versions
+[LOCKING] 3 packages to highest compatible versions
 [DOWNLOADING] crates ...
-[DOWNLOADED] dep v1.0.0 (registry `dummy-registry`)
-[DOWNLOADED] bar_activator v1.0.0 (registry `dummy-registry`)
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[DOWNLOADED] bar_activator v1.0.0 (registry `dummy-registry`)
+[DOWNLOADED] dep v1.0.0 (registry `dummy-registry`)
 [CHECKING] bar v1.0.0
 [CHECKING] dep v1.0.0
 [CHECKING] bar_activator v1.0.0
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
-"#]])
+"#]]
+            .unordered(),
+        )
         .run();
 }
 
@@ -180,6 +188,9 @@ fn optional_cli_syntax() {
 
                 [dependencies]
                 bar = { version = "1.0", optional = true }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -189,7 +200,7 @@ fn optional_cli_syntax() {
     p.cargo("check --features bar?/feat")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
@@ -260,7 +271,7 @@ fn required_features() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [ERROR] invalid feature `bar?/feat` in required-features of target `foo`: optional dependency with `?` is not allowed in required-features
 
 "#]])
@@ -352,13 +363,14 @@ fn weak_with_host_decouple() {
         .build();
 
     p.cargo("run")
-        .with_stderr_data(str![[r#"
+        .with_stderr_data(
+            str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 4 packages to latest compatible versions
+[LOCKING] 3 packages to highest compatible versions
 [DOWNLOADING] crates ...
-[DOWNLOADED] common v1.0.0 (registry `dummy-registry`)
-[DOWNLOADED] bar_activator v1.0.0 (registry `dummy-registry`)
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
+[DOWNLOADED] bar_activator v1.0.0 (registry `dummy-registry`)
+[DOWNLOADED] common v1.0.0 (registry `dummy-registry`)
 [COMPILING] bar v1.0.0
 [COMPILING] common v1.0.0
 [COMPILING] bar_activator v1.0.0
@@ -366,7 +378,9 @@ fn weak_with_host_decouple() {
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [RUNNING] `target/debug/foo[EXE]`
 
-"#]])
+"#]]
+            .unordered(),
+        )
         .run();
 }
 
@@ -392,6 +406,9 @@ fn weak_namespaced() {
                 [features]
                 f1 = ["bar?/feat"]
                 f2 = ["dep:bar"]
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", &require(&["f1"], &["f2", "bar"]))
@@ -400,7 +417,7 @@ fn weak_namespaced() {
     p.cargo("check --features f1")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
@@ -570,15 +587,15 @@ fn publish() {
         .with_stderr_data(str![[r#"
 [UPDATING] crates.io index
 [PACKAGING] foo v0.1.0 ([ROOT]/foo)
-[PACKAGED] 3 files, [FILE_SIZE]B ([FILE_SIZE]B compressed)
-[VERIFYING] foo v0.1.0 ([ROOT]/foo)
 [UPDATING] crates.io index
+[PACKAGED] 4 files, [FILE_SIZE]B ([FILE_SIZE]B compressed)
+[VERIFYING] foo v0.1.0 ([ROOT]/foo)
 [COMPILING] foo v0.1.0 ([ROOT]/foo/target/package/foo-0.1.0)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [UPLOADING] foo v0.1.0 ([ROOT]/foo)
 [UPLOADED] foo v0.1.0 to registry `crates-io`
-[NOTE] waiting for `foo v0.1.0` to be available at registry `crates-io`.
-You may press ctrl-c to skip waiting; the crate should be available shortly.
+[NOTE] waiting for foo v0.1.0 to be available at registry `crates-io`
+[HELP] you may press ctrl-c to skip waiting; the crate should be available shortly
 [PUBLISHED] foo v0.1.0 at registry `crates-io`
 
 "#]])
@@ -621,16 +638,27 @@ You may press ctrl-c to skip waiting; the crate should be available shortly.
           }
         "#,
         "foo-0.1.0.crate",
-        &["Cargo.toml", "Cargo.toml.orig", "src/lib.rs"],
-        &[(
+        &["Cargo.toml", "Cargo.toml.orig", "src/lib.rs", "Cargo.lock"],
+        [(
             "Cargo.toml",
-            &format!(
-                r#"{}
+            str![[r##"
+# THIS FILE IS AUTOMATICALLY GENERATED BY CARGO
+#
+# When uploading crates to the registry Cargo will automatically
+# "normalize" Cargo.toml files for maximal compatibility
+# with all versions of Cargo and also rewrite `path` dependencies
+# to registry (e.g., crates.io) dependencies.
+#
+# If you are reading this file be aware that the original Cargo.toml
+# will likely look very different (and much more reasonable).
+# See Cargo.toml.orig for the original contents.
+
 [package]
 edition = "2015"
 name = "foo"
 version = "0.1.0"
 build = false
+autolib = false
 autobins = false
 autoexamples = false
 autotests = false
@@ -640,6 +668,10 @@ homepage = "https://example.com/"
 readme = false
 license = "MIT"
 
+[features]
+feat1 = []
+feat2 = ["bar?/feat"]
+
 [lib]
 name = "foo"
 path = "src/lib.rs"
@@ -648,12 +680,7 @@ path = "src/lib.rs"
 version = "1.0"
 optional = true
 
-[features]
-feat1 = []
-feat2 = ["bar?/feat"]
-"#,
-                cargo::core::manifest::MANIFEST_PREAMBLE
-            ),
+"##]],
         )],
     );
 }

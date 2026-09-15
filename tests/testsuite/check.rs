@@ -2,13 +2,12 @@
 
 use std::fmt::{self, Write};
 
+use crate::prelude::*;
+use crate::utils::tools;
 use cargo_test_support::compare::assert_e2e;
 use cargo_test_support::install::exe;
-use cargo_test_support::paths::CargoPathExt;
-use cargo_test_support::prelude::*;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
-use cargo_test_support::tools;
 use cargo_test_support::{basic_bin_manifest, basic_manifest, git, project};
 
 #[cargo_test]
@@ -356,7 +355,7 @@ fn rustc_check_err() {
     foo.cargo("rustc --profile check -- --emit=metadata")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [CHECKING] bar v0.1.0 ([ROOT]/bar)
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
 error[E0425]: [..]
@@ -407,7 +406,6 @@ fn check_all() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn check_all_exclude() {
     let p = project()
@@ -427,7 +425,6 @@ fn check_all_exclude() {
     p.cargo("check --workspace --exclude baz")
         .with_stderr_does_not_contain("[CHECKING] baz v0.1.0 [..]")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -435,7 +432,6 @@ fn check_all_exclude() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn check_all_exclude_glob() {
     let p = project()
@@ -455,7 +451,6 @@ fn check_all_exclude_glob() {
     p.cargo("check --workspace --exclude '*z'")
         .with_stderr_does_not_contain("[CHECKING] baz v0.1.0 [..]")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -482,7 +477,6 @@ fn check_virtual_all_implied() {
     p.cargo("check -v")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [CHECKING] baz v0.1.0 ([ROOT]/foo/baz)
 [CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
 [RUNNING] `rustc --crate-name baz [..] baz/src/lib.rs [..]`
@@ -495,7 +489,6 @@ fn check_virtual_all_implied() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn check_virtual_manifest_one_project() {
     let p = project()
@@ -515,7 +508,6 @@ fn check_virtual_manifest_one_project() {
     p.cargo("check -p bar")
         .with_stderr_does_not_contain("[CHECKING] baz v0.1.0 [..]")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -523,7 +515,27 @@ fn check_virtual_manifest_one_project() {
         .run();
 }
 
-#[allow(deprecated)]
+#[cargo_test]
+fn check_virtual_manifest_one_bin_project_not_in_default_members() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [workspace]
+                members = ["bar"]
+                default-members = []
+                resolver = "3"
+            "#,
+        )
+        .file("bar/Cargo.toml", &basic_manifest("bar", "0.1.0"))
+        .file("bar/src/main.rs", "fn main() { let _ = (1); }")
+        .build();
+
+    p.cargo("check -p bar")
+        .with_stderr_contains("[..]run `cargo fix --bin \"bar\" -p bar` to apply[..]")
+        .run();
+}
+
 #[cargo_test]
 fn check_virtual_manifest_glob() {
     let p = project()
@@ -543,7 +555,6 @@ fn check_virtual_manifest_glob() {
     p.cargo("check -p '*z'")
         .with_stderr_does_not_contain("[CHECKING] bar v0.1.0 [..]")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [CHECKING] baz v0.1.0 ([ROOT]/foo/baz)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -565,7 +576,6 @@ fn exclude_warns_on_non_existing_package() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn targets_selected_default() {
     let foo = project()
@@ -639,7 +649,6 @@ error[E0425]: cannot find value `badtext` in this scope
         .run();
 }
 
-#[allow(deprecated)]
 // Verify what is checked with various command-line filters.
 #[cargo_test]
 fn check_filters() {
@@ -764,21 +773,33 @@ fn check_artifacts() {
     assert!(!p.root().join("target/debug/libfoo.rmeta").is_file());
     assert!(!p.root().join("target/debug/libfoo.rlib").is_file());
     assert!(!p.root().join("target/debug").join(exe("foo")).is_file());
-    assert_eq!(p.glob("target/debug/deps/libfoo-*.rmeta").count(), 2);
+    assert_eq!(
+        p.glob("target/debug/build/foo/*/out/libfoo-*.rmeta")
+            .count(),
+        2
+    );
 
     p.root().join("target").rm_rf();
     p.cargo("check --lib").run();
     assert!(!p.root().join("target/debug/libfoo.rmeta").is_file());
     assert!(!p.root().join("target/debug/libfoo.rlib").is_file());
     assert!(!p.root().join("target/debug").join(exe("foo")).is_file());
-    assert_eq!(p.glob("target/debug/deps/libfoo-*.rmeta").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/foo/*/out/libfoo-*.rmeta")
+            .count(),
+        1
+    );
 
     p.root().join("target").rm_rf();
     p.cargo("check --bin foo").run();
     assert!(!p.root().join("target/debug/libfoo.rmeta").is_file());
     assert!(!p.root().join("target/debug/libfoo.rlib").is_file());
     assert!(!p.root().join("target/debug").join(exe("foo")).is_file());
-    assert_eq!(p.glob("target/debug/deps/libfoo-*.rmeta").count(), 2);
+    assert_eq!(
+        p.glob("target/debug/build/foo/*/out/libfoo-*.rmeta")
+            .count(),
+        2
+    );
 
     p.root().join("target").rm_rf();
     p.cargo("check --test t1").run();
@@ -786,20 +807,36 @@ fn check_artifacts() {
     assert!(!p.root().join("target/debug/libfoo.rlib").is_file());
     assert!(!p.root().join("target/debug").join(exe("foo")).is_file());
     assert_eq!(p.glob("target/debug/t1-*").count(), 0);
-    assert_eq!(p.glob("target/debug/deps/libfoo-*.rmeta").count(), 1);
-    assert_eq!(p.glob("target/debug/deps/libt1-*.rmeta").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/foo/*/out/libfoo-*.rmeta")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/foo/*/out/libt1-*.rmeta").count(),
+        1
+    );
 
     p.root().join("target").rm_rf();
     p.cargo("check --example ex1").run();
     assert!(!p.root().join("target/debug/libfoo.rmeta").is_file());
     assert!(!p.root().join("target/debug/libfoo.rlib").is_file());
-    assert!(!p
-        .root()
-        .join("target/debug/examples")
-        .join(exe("ex1"))
-        .is_file());
-    assert_eq!(p.glob("target/debug/deps/libfoo-*.rmeta").count(), 1);
-    assert_eq!(p.glob("target/debug/examples/libex1-*.rmeta").count(), 1);
+    assert!(
+        !p.root()
+            .join("target/debug/examples")
+            .join(exe("ex1"))
+            .is_file()
+    );
+    assert_eq!(
+        p.glob("target/debug/build/foo/*/out/libfoo-*.rmeta")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/foo/*/out/libex1-*.rmeta")
+            .count(),
+        1
+    );
 
     p.root().join("target").rm_rf();
     p.cargo("check --bench b1").run();
@@ -807,8 +844,15 @@ fn check_artifacts() {
     assert!(!p.root().join("target/debug/libfoo.rlib").is_file());
     assert!(!p.root().join("target/debug").join(exe("foo")).is_file());
     assert_eq!(p.glob("target/debug/b1-*").count(), 0);
-    assert_eq!(p.glob("target/debug/deps/libfoo-*.rmeta").count(), 1);
-    assert_eq!(p.glob("target/debug/deps/libb1-*.rmeta").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/foo/*/out/libfoo-*.rmeta")
+            .count(),
+        1
+    );
+    assert_eq!(
+        p.glob("target/debug/build/foo/*/out/libb1-*.rmeta").count(),
+        1
+    );
 }
 
 #[cargo_test]
@@ -820,7 +864,7 @@ fn short_message_format() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
-src/lib.rs:1:27: error[E0308]: mismatched types
+src/lib.rs:1:27: error[E0308]: mismatched types[..]
 [ERROR] could not compile `foo` (lib) due to 1 previous error
 
 "#]])
@@ -1006,7 +1050,6 @@ WRAPPER CALLED: rustc --crate-name foo [..]
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn rustc_workspace_wrapper_respects_primary_units() {
     let p = project()
@@ -1030,7 +1073,6 @@ fn rustc_workspace_wrapper_respects_primary_units() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn rustc_workspace_wrapper_excludes_published_deps() {
     let p = project()
@@ -1083,7 +1125,8 @@ fn warn_manifest_with_project() {
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `[project]` is deprecated in favor of `[package]`
+[WARNING] Cargo.toml: `[project]` is deprecated in favor of `[package]`
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1091,14 +1134,12 @@ fn warn_manifest_with_project() {
         .run();
 }
 
-#[cargo_test(nightly, reason = "edition2024")]
+#[cargo_test]
 fn error_manifest_with_project_on_2024() {
     let p = project()
         .file(
             "Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [project]
                 name = "foo"
                 version = "0.0.1"
@@ -1109,7 +1150,6 @@ fn error_manifest_with_project_on_2024() {
         .build();
 
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -1143,7 +1183,8 @@ fn warn_manifest_package_and_project() {
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `[project]` is deprecated in favor of `[package]`
+[WARNING] Cargo.toml: `[project]` is deprecated in favor of `[package]`
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1167,6 +1208,9 @@ fn git_manifest_package_and_project() {
             name = "bar"
             version = "0.0.1"
             edition = "2015"
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -1186,6 +1230,9 @@ fn git_manifest_package_and_project() {
                 version = "0.0.1"
                 git  = '{}'
 
+
+                [lints.cargo]
+                default = "allow"
             "#,
                 git_project.url()
             ),
@@ -1196,7 +1243,7 @@ fn git_manifest_package_and_project() {
     p.cargo("check")
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/bar`
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [CHECKING] bar v0.0.1 ([ROOTURL]/bar#[..])
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -1235,6 +1282,9 @@ fn git_manifest_with_project() {
                 version = "0.0.1"
                 git  = '{}'
 
+
+                [lints.cargo]
+                default = "allow"
             "#,
                 git_project.url()
             ),
@@ -1245,7 +1295,7 @@ fn git_manifest_with_project() {
     p.cargo("check")
         .with_stderr_data(str![[r#"
 [UPDATING] git repository `[ROOTURL]/bar`
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [CHECKING] bar v0.0.1 ([ROOTURL]/bar#[..])
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -1416,7 +1466,7 @@ fn check_fixable_example() {
     p.cargo("check --all-targets")
         .with_stderr_data(str![[r#"
 ...
-[WARNING] `foo` (example "ex1") generated 1 warning (run `cargo fix --example "ex1"` to apply 1 suggestion)
+[WARNING] `foo` (example "ex1") generated 1 warning (run `cargo fix --example "ex1" -p foo` to apply 1 suggestion)
 ...
 "#]])
         .run();
@@ -1462,7 +1512,7 @@ fn check_fixable_bench() {
     p.cargo("check --all-targets")
         .with_stderr_data(str![[r#"
 ...
-[WARNING] `foo` (bench "bench") generated 1 warning (run `cargo fix --bench "bench"` to apply 1 suggestion)
+[WARNING] `foo` (bench "bench") generated 1 warning (run `cargo fix --bench "bench" -p foo` to apply 1 suggestion)
 ...
 "#]])
         .run();
@@ -1512,9 +1562,9 @@ fn check_fixable_mixed() {
         .build();
     p.cargo("check --all-targets")
         .with_stderr_data(str![[r#"
-[WARNING] `foo` (example "ex1") generated 1 warning (run `cargo fix --example "ex1"` to apply 1 suggestion)
-[WARNING] `foo` (bench "bench") generated 1 warning (run `cargo fix --bench "bench"` to apply 1 suggestion)
-[WARNING] `foo` (bin "foo" test) generated 2 warnings (run `cargo fix --bin "foo" --tests` to apply 2 suggestions)
+[WARNING] `foo` (example "ex1") generated 1 warning (run `cargo fix --example "ex1" -p foo` to apply 1 suggestion)
+[WARNING] `foo` (bench "bench") generated 1 warning (run `cargo fix --bench "bench" -p foo` to apply 1 suggestion)
+[WARNING] `foo` (bin "foo" test) generated 2 warnings (run `cargo fix --bin "foo" -p foo --tests` to apply 2 suggestions)
 ...
 "#]].unordered())
         .run();
@@ -1544,6 +1594,16 @@ fn check_fixable_warning_for_clippy() {
         .with_stderr_data(str![[r#"
 ...
 [WARNING] `foo` (lib) generated 1 warning (run `cargo clippy --fix --lib -p foo` to apply 1 suggestion)
+...
+"#]])
+        .run();
+
+    foo.cargo("check")
+        .env("RUSTC_WORKSPACE_WRAPPER", tools::wrapped_clippy_driver())
+        .env("CLIPPY_ARGS", "-Wclippy::pedantic__CLIPPY_HACKERY__-Aclippy::allow_attributes__CLIPPY_HACKERY__") // Set -Wclippy::pedantic
+        .with_stderr_data(str![[r#"
+...
+[WARNING] `foo` (lib) generated 1 warning (run `cargo clippy --fix --lib -p foo -- -Wclippy::pedantic -Aclippy::allow_attributes` to apply 1 suggestion)
 ...
 "#]])
         .run();
@@ -1582,6 +1642,9 @@ fn check_unused_manifest_keys() {
 
             [target.bar.build-dependencies]
             foo = { version = "0.1.0", wxz = "wxz" }
+
+            [lints.cargo]
+            default = "allow"
         "#,
         )
         .file("src/main.rs", "fn main() {}")
@@ -1590,15 +1653,16 @@ fn check_unused_manifest_keys() {
     p.cargo("check")
         .with_stderr_data(
             str![[r#"
-[WARNING] unused manifest key: dependencies.dep.wxz
-[WARNING] unused manifest key: dependencies.foo.abc
-[WARNING] unused manifest key: dev-dependencies.foo.wxz
-[WARNING] unused manifest key: build-dependencies.foo.wxz
-[WARNING] unused manifest key: target.bar.build-dependencies.foo.wxz
-[WARNING] unused manifest key: target.cfg(windows).dependencies.foo.wxz
-[WARNING] unused manifest key: target.wasm32-wasip1.dev-dependencies.foo.wxz
+[WARNING] Cargo.toml: unused manifest key: dependencies.dep.wxz
+[WARNING] Cargo.toml: unused manifest key: dependencies.foo.abc
+[WARNING] Cargo.toml: unused manifest key: dev-dependencies.foo.wxz
+[WARNING] Cargo.toml: unused manifest key: build-dependencies.foo.wxz
+[WARNING] Cargo.toml: unused manifest key: target.bar.build-dependencies.foo.wxz
+[WARNING] Cargo.toml: unused manifest key: target.cfg(windows).dependencies.foo.wxz
+[WARNING] Cargo.toml: unused manifest key: target.wasm32-wasip1.dev-dependencies.foo.wxz
+[WARNING] `bar` (manifest) generated 7 warnings
 [UPDATING] `dummy-registry` index
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [DOWNLOADING] crates ...
 [DOWNLOADED] foo v0.1.0 (registry `dummy-registry`)
 [DOWNLOADED] dep v0.1.0 (registry `dummy-registry`)
@@ -1662,7 +1726,7 @@ fn pkgid_querystring_works() {
 
     p.cargo("generate-lockfile").run();
 
-    let output = p.cargo("pkgid").arg("gitdep").exec_with_output().unwrap();
+    let output = p.cargo("pkgid").arg("gitdep").run();
     let gitdep_pkgid = String::from_utf8(output.stdout).unwrap();
     let gitdep_pkgid = gitdep_pkgid.trim();
     assert_e2e().eq(
@@ -1678,4 +1742,157 @@ fn pkgid_querystring_works() {
 
 "#]])
         .run();
+}
+
+#[cargo_test]
+fn check_build_should_not_output_files_to_artifact_dir() {
+    let p = project()
+        .file("src/main.rs", r#"fn main() { println!("Hello, World!") }"#)
+        .file(
+            ".cargo/config.toml",
+            r#"
+            [build]
+            target-dir = "target-dir"
+            build-dir = "build-dir"
+            "#,
+        )
+        .build();
+
+    p.cargo("check").enable_mac_dsym().run();
+
+    p.root()
+        .join("target-dir")
+        .assert_build_dir_layout(str![[r#"
+[ROOT]/foo/target-dir/CACHEDIR.TAG
+[ROOT]/foo/target-dir/debug/.cargo-lock
+
+"#]]);
+}
+
+#[cargo_test]
+fn check_build_should_lock_target_dir_when_artifact_dir_is_same_as_build_dir() {
+    let p = project()
+        .file("src/main.rs", r#"fn main() { println!("Hello, World!") }"#)
+        .build();
+
+    p.cargo("check").enable_mac_dsym().run();
+    assert!(p.root().join("target/debug/.cargo-build-lock").exists());
+}
+
+#[cargo_test]
+fn check_build_should_not_lock_artifact_dir_when_build_dir_is_not_same_dir() {
+    let p = project()
+        .file("src/main.rs", r#"fn main() { println!("Hello, World!") }"#)
+        .file(
+            ".cargo/config.toml",
+            r#"
+            [build]
+            target-dir = "target-dir"
+            build-dir = "build-dir"
+            "#,
+        )
+        .build();
+
+    p.cargo("check").enable_mac_dsym().run();
+
+    // Verify we did NOT take the artifact-dir lock
+    assert!(
+        !p.root()
+            .join("target-dir/debug/.cargo-artifact-lock")
+            .exists()
+    );
+    // Verify we did take the build-dir lock
+    assert!(p.root().join("build-dir/debug/.cargo-build-lock").exists());
+}
+
+// Regression test for #16305
+#[cargo_test]
+fn check_build_should_not_uplift_proc_macro_dylib_deps() {
+    let p = project()
+        .file(
+            ".cargo/config.toml",
+            r#"
+            [build]
+            target-dir = "target-dir"
+            build-dir = "build-dir"
+            "#,
+        )
+        .file(
+            "Cargo.toml",
+            r#"
+                [workspace]
+                members = ["foo", "bar", "baz"]
+            "#,
+        )
+        // Bin
+        .file(
+            "foo/Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.0.1"
+                edition = "2015"
+
+                [dependencies]
+                bar = { path = "../bar" }
+            "#,
+        )
+        .file("foo/src/main.rs", "fn main() {}")
+        // Proc macro
+        .file(
+            "bar/Cargo.toml",
+            r#"
+                [package]
+                name = "bar"
+                version = "0.0.1"
+                edition = "2015"
+
+                [lib]
+                proc-macro = true
+
+                [dependencies]
+                baz = { path = "../baz" }
+            "#,
+        )
+        .file(
+            "bar/src/lib.rs",
+            r#"
+            extern crate proc_macro;
+
+            use proc_macro::TokenStream;
+
+            #[proc_macro_derive(B)]
+            pub fn derive(input: TokenStream) -> TokenStream {
+                input
+            }
+            "#,
+        )
+        // Dylib
+        .file(
+            "baz/Cargo.toml",
+            r#"
+                [package]
+                name = "baz"
+                version = "0.1.0"
+                edition = "2015"
+                authors = []
+
+                [lib]
+                crate-type = ["dylib"]
+
+                [dependencies]
+            "#,
+        )
+        .file("baz/src/lib.rs", "pub fn baz() { }")
+        .build();
+
+    p.cargo("check").enable_mac_dsym().run();
+
+    p.root()
+        .join("target-dir")
+        .assert_build_dir_layout(str![[r#"
+[ROOT]/foo/target-dir/CACHEDIR.TAG
+[ROOT]/foo/target-dir/debug/.cargo-lock
+
+"#]]);
 }

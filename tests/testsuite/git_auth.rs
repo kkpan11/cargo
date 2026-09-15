@@ -1,18 +1,18 @@
 //! Tests for git authentication.
 
-use std::collections::HashSet;
-use std::io::prelude::*;
+use cargo::util::data_structures::HashSet;
 use std::io::BufReader;
+use std::io::prelude::*;
 use std::net::{SocketAddr, TcpListener};
-use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 use std::thread::{self, JoinHandle};
 
+use crate::prelude::*;
 use cargo_test_support::basic_manifest;
-use cargo_test_support::git::cargo_uses_gitoxide;
 use cargo_test_support::paths;
-use cargo_test_support::prelude::*;
 use cargo_test_support::project;
+use cargo_test_support::str;
 
 fn setup_failed_auth_test() -> (SocketAddr, JoinHandle<()>, Arc<AtomicUsize>) {
     let server = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -147,7 +147,7 @@ Caused by:
   failed to load source for dependency `bar`
 
 Caused by:
-  Unable to update http://{addr}/foo/bar
+  unable to update http://{addr}/foo/bar
 
 Caused by:
   failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
@@ -161,16 +161,8 @@ Caused by:
   https://doc.rust-lang.org/cargo/reference/config.html#netgit-fetch-with-cli
 
 Caused by:
-{trailer}
-",
-            trailer = if cargo_uses_gitoxide() {
-              format!(r#"[CREDENTIAL]s provided for "http://{addr}/foo/bar" were not accepted by the remote
-
-Caused by:
-  Received HTTP status 401"#)
-            } else {
-              "  no authentication methods succeeded".to_string()
-            }
+  no authentication methods succeeded
+"
         ))
         .run();
     assert_eq!(connections.load(SeqCst), 2);
@@ -226,7 +218,7 @@ Caused by:
   failed to load source for dependency `bar`
 
 Caused by:
-  Unable to update https://{addr}/foo/bar
+  unable to update https://{addr}/foo/bar
 
 Caused by:
   failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
@@ -234,17 +226,7 @@ Caused by:
 Caused by:
 {errmsg}
 ",
-            errmsg = if cargo_uses_gitoxide() {
-                r"  network failure seems to have happened
-  if a proxy or similar is necessary `net.git-fetch-with-cli` may help here
-  https://doc.rust-lang.org/cargo/reference/config.html#netgit-fetch-with-cli
-
-Caused by:
-  An IO error occurred when talking to the server
-
-Caused by:
-  [35] SSL connect error ([..])"
-            } else if cfg!(windows) {
+            errmsg = if cfg!(windows) {
                 "[..]failed to send request: [..]\n..."
             } else if cfg!(target_os = "macos") {
                 // macOS is difficult to tests as some builds may use Security.framework,
@@ -289,34 +271,8 @@ fn ssh_something_happens() {
         .file("src/main.rs", "")
         .build();
 
-    let expected = if cargo_uses_gitoxide() {
-        // Due to the usage of `ssh` and `ssh.exe` respectively, the messages change.
-        // This will be adjusted to use `ssh2` to get rid of this dependency and have uniform messaging.
-        let message = if cfg!(windows) {
-            // The order of multiple possible messages isn't deterministic within `ssh`, and `gitoxide` detects both
-            // but gets to report only the first. Thus this test can flip-flop from one version of the error to the other
-            // and we can't test for that.
-            // We'd want to test for:
-            // "[..]ssh: connect to host 127.0.0.1 [..]"
-            //   ssh: connect to host example.org port 22: No route to host
-            // "[..]banner exchange: Connection to 127.0.0.1 [..]"
-            //   banner exchange: Connection to 127.0.0.1 port 62250: Software caused connection abort
-            // But since there is no common meaningful sequence or word, we can only match a small telling sequence of characters.
-            "[..]onnect[..]"
-        } else {
-            "[..]Connection [..] by [..]"
-        };
-        format!(
-            "\
-[UPDATING] git repository `ssh://{addr}/foo/bar`
-...
-{message}
-...
-"
-        )
-    } else {
-        format!(
-            "\
+    let expected = format!(
+        "\
 [UPDATING] git repository `ssh://{addr}/foo/bar`
 [ERROR] failed to get `bar` as a dependency of package `foo v0.0.1 ([ROOT]/foo)`
 
@@ -324,7 +280,7 @@ Caused by:
   failed to load source for dependency `bar`
 
 Caused by:
-  Unable to update ssh://{addr}/foo/bar
+  unable to update ssh://{addr}/foo/bar
 
 Caused by:
   failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]
@@ -337,8 +293,7 @@ Caused by:
 Caused by:
   failed to start SSH session: Failed getting banner; class=Ssh (23)
 "
-        )
-    };
+    );
     p.cargo("check -v")
         .with_status(101)
         .with_stderr_data(expected)
@@ -346,7 +301,6 @@ Caused by:
     t.join().ok().unwrap();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn net_err_suggests_fetch_with_cli() {
     let p = project()
@@ -368,19 +322,18 @@ fn net_err_suggests_fetch_with_cli() {
 
     p.cargo("check -v")
         .with_status(101)
-        .with_stderr_data(format!(
-            "\
+        .with_stderr_data(str![[r#"
 [UPDATING] git repository `ssh://needs-proxy.invalid/git`
 [WARNING] spurious network error (3 tries remaining): [..] resolve [..] needs-proxy.invalid: [..] known[..]
 [WARNING] spurious network error (2 tries remaining): [..] resolve [..] needs-proxy.invalid: [..] known[..]
-[WARNING] spurious network error (1 tries remaining): [..] resolve [..] needs-proxy.invalid: [..] known[..]
+[WARNING] spurious network error (1 try remaining): [..] resolve [..] needs-proxy.invalid: [..] known[..]
 [ERROR] failed to get `foo` as a dependency of package `foo v0.0.0 ([ROOT]/foo)`
 
 Caused by:
   failed to load source for dependency `foo`
 
 Caused by:
-  Unable to update ssh://needs-proxy.invalid/git
+  unable to update ssh://needs-proxy.invalid/git
 
 Caused by:
   failed to clone into: [ROOT]/home/.cargo/git/db/git-[HASH]
@@ -391,17 +344,9 @@ Caused by:
   https://doc.rust-lang.org/cargo/reference/config.html#netgit-fetch-with-cli
 
 Caused by:
-{trailer}
-",
-            trailer = if cargo_uses_gitoxide() {
-                r"  An IO error occurred when talking to the server
+  failed to resolve address for needs-proxy.invalid: [..] known[..]; class=Net (12)
 
-Caused by:
-  ssh: Could not resolve hostname needs-proxy.invalid[..]"
-            } else {
-                "  failed to resolve address for needs-proxy.invalid: [..] known[..]; class=Net (12)"
-            }
-        ))
+"#]])
         .run();
 
     p.change_file(
@@ -414,7 +359,7 @@ Caused by:
 
     p.cargo("check -v")
         .with_status(101)
-        .with_stderr_contains("[..]Unable to update[..]")
+        .with_stderr_contains("[..]unable to update[..]")
         .with_stderr_does_not_contain("[..]try enabling `git-fetch-with-cli`[..]")
         .run();
 }
@@ -458,7 +403,7 @@ Caused by:
   failed to load source for dependency `bar`
 
 Caused by:
-  Unable to update https://foo.bar/foo/bar
+  unable to update https://foo.bar/foo/bar
 
 Caused by:
   failed to clone into: [ROOT]/home/.cargo/git/db/bar-[HASH]

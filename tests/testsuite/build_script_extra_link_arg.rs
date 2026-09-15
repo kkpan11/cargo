@@ -4,7 +4,7 @@
 // because MSVC link.exe just gives a warning on unknown flags (how helpful!),
 // and other linkers will return an error.
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
 use cargo_test_support::{basic_bin_manifest, basic_lib_manifest, basic_manifest, project};
@@ -219,7 +219,7 @@ fn cdylib_link_arg_transitive() {
 ...
 [COMPILING] bar v1.0.0 ([ROOT]/foo/bar)
 [RUNNING] `rustc --crate-name build_script_build --edition=2015 bar/build.rs [..]
-[RUNNING] `[ROOT]/foo/target/debug/build/bar-[HASH]/build-script-build`
+[RUNNING] `[ROOT]/foo/target/debug/build/bar/[HASH]/out/build_script_build`
 [WARNING] bar@1.0.0: cargo::rustc-link-arg-cdylib was specified in the build script of bar v1.0.0 \
 ([ROOT]/foo/bar), but that package does not contain a cdylib target
 
@@ -233,7 +233,6 @@ the future. For more information, see <https://github.com/rust-lang/cargo/issues
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn link_arg_transitive_not_allowed() {
     // Verify that transitive dependencies don't pass link args.
@@ -267,6 +266,9 @@ fn link_arg_transitive_not_allowed() {
 
                 [dependencies]
                 bar = "1.0"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -275,12 +277,12 @@ fn link_arg_transitive_not_allowed() {
     p.cargo("build -v")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
 [COMPILING] bar v1.0.0
 [RUNNING] `rustc --crate-name build_script_build [..]
-[RUNNING] `[ROOT]/foo/target/debug/build/bar-[HASH]/build-script-build`
+[RUNNING] `[ROOT]/foo/target/debug/build/bar/[HASH]/out/build_script_build`
 [RUNNING] `rustc --crate-name bar [..]
 [COMPILING] foo v0.1.0 ([ROOT]/foo)
 [RUNNING] `rustc --crate-name foo --edition=2015 src/lib.rs [..]
@@ -403,4 +405,81 @@ fn build_script_extra_link_arg_examples() {
 ...",
         )
         .run();
+}
+
+#[cargo_test]
+fn cdylib_both_forms() {
+    // Cargo accepts two different forms for the cdylib link instruction,
+    // which have the same meaning.
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2015"
+
+                [lib]
+                crate-type = ["cdylib"]
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file(
+            "build.rs",
+            r#"
+                fn main() {
+                    println!("cargo::rustc-cdylib-link-arg=--bogus-flag-one");
+                    println!("cargo::rustc-link-arg-cdylib=--bogus-flag-two");
+                }
+            "#,
+        )
+        .build();
+    p.cargo("build -v")
+        .without_status()
+        .with_stderr_data(str![[r#"
+[COMPILING] foo v0.1.0 ([ROOT]/foo)
+[RUNNING] `rustc --crate-name build_script_build [..]
+[RUNNING] `[ROOT]/foo/target/debug/build/foo/[HASH]/out/build_script_build`
+[RUNNING] `rustc --crate-name foo [..]--crate-type cdylib [..]-C link-arg=--bogus-flag-one -C link-arg=--bogus-flag-two[..]
+...
+"#]])
+        .run();
+}
+
+// https://github.com/rust-lang/cargo/issues/12663
+#[cargo_test]
+fn cdylib_extra_link_args_should_not_apply_to_unit_tests() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.5.0"
+                edition = "2015"
+
+                [lib]
+                crate-type = ["lib", "cdylib"]
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            r#"
+                #[test]
+                fn noop() {}
+            "#,
+        )
+        .file(
+            "build.rs",
+            r#"
+                fn main() {
+                    // This would fail if cargo passed `-lhack` to building the test because `hack` doesn't exist.
+                    println!("cargo::rustc-link-arg-cdylib=-lhack");
+                }
+            "#,
+        )
+        .build();
+
+    p.cargo("test --lib").run();
 }

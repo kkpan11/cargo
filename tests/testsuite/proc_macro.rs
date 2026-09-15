@@ -1,6 +1,6 @@
 //! Tests for proc-macros.
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::project;
 use cargo_test_support::str;
 
@@ -374,7 +374,8 @@ fn proc_macro_crate_type_warning() {
 
     foo.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] library `foo` should only specify `proc-macro = true` instead of setting `crate-type`
+[WARNING] Cargo.toml: library `foo` should only specify `proc-macro = true` instead of setting `crate-type`
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -401,7 +402,8 @@ fn lib_plugin_unused_key_warning() {
 
     foo.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] unused manifest key: lib.plugin
+[WARNING] Cargo.toml: unused manifest key: lib.plugin
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -428,7 +430,8 @@ fn proc_macro_crate_type_warning_plugin() {
 
     foo.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] library `foo` should only specify `proc-macro = true` instead of setting `crate-type`
+[WARNING] Cargo.toml: library `foo` should only specify `proc-macro = true` instead of setting `crate-type`
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -516,6 +519,9 @@ fn proc_macro_built_once() {
 
                 [build-dependencies]
                 the-macro = { path = '../the-macro' }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("a/build.rs", "fn main() {}")
@@ -530,6 +536,9 @@ fn proc_macro_built_once() {
 
                 [dependencies]
                 the-macro = { path = '../the-macro', features = ['a'] }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("b/src/main.rs", "fn main() {}")
@@ -546,6 +555,9 @@ fn proc_macro_built_once() {
 
                 [features]
                 a = []
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("the-macro/src/lib.rs", "")
@@ -553,14 +565,13 @@ fn proc_macro_built_once() {
     p.cargo("build --verbose")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 3 packages to latest compatible versions
 [COMPILING] the-macro v0.1.0 ([ROOT]/foo/the-macro)
 [RUNNING] `rustc --crate-name the_macro [..]`
 [COMPILING] b v0.1.0 ([ROOT]/foo/b)
 [RUNNING] `rustc --crate-name b [..]`
 [COMPILING] a v0.1.0 ([ROOT]/foo/a)
 [RUNNING] `rustc --crate-name build_script_build [..]`
-[RUNNING] `[ROOT]/foo/target/debug/build/a-[HASH]/build-script-build`
+[RUNNING] `[ROOT]/foo/target/debug/build/a/[HASH]/out/build_script_build`
 [RUNNING] `rustc --crate-name a [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 

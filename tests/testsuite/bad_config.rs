@@ -1,10 +1,8 @@
 //! Tests for some invalid .cargo/config files.
 
-use cargo_test_support::git::cargo_uses_gitoxide;
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::registry::{self, Package};
-use cargo_test_support::str;
-use cargo_test_support::{basic_manifest, project, rustc_host};
+use cargo_test_support::{Project, basic_bin_manifest, basic_manifest, project, rustc_host, str};
 
 #[cargo_test]
 fn bad1() {
@@ -28,7 +26,7 @@ fn bad1() {
 }
 
 #[cargo_test]
-fn bad2() {
+fn unsupported_float() {
     let p = project()
         .file("src/lib.rs", "")
         .file(
@@ -48,13 +46,100 @@ Caused by:
   failed to load TOML configuration from `[ROOT]/foo/.cargo/config.toml`
 
 Caused by:
-  failed to parse key `http`
+  failed to parse config at `http.proxy`
 
 Caused by:
-  failed to parse key `proxy`
+  unsupported TOML configuration type `float`
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn unsupported_datetime() {
+    let p = project()
+        .file("src/lib.rs", "")
+        .file(
+            ".cargo/config.toml",
+            r#"
+                [http]
+                proxy = 1979-05-27T07:32:00Z
+            "#,
+        )
+        .build();
+    p.cargo("publish -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] could not load Cargo configuration
 
 Caused by:
-  found TOML configuration value of unknown type `float`
+  failed to load TOML configuration from `[ROOT]/foo/.cargo/config.toml`
+
+Caused by:
+  failed to parse config at `http.proxy`
+
+Caused by:
+  unsupported TOML configuration type `datetime`
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn unsupported_float_array() {
+    let p = project()
+        .file("src/lib.rs", "")
+        .file(
+            ".cargo/config.toml",
+            r#"
+                [alias]
+                floats = [2.71828, 3.14159]
+            "#,
+        )
+        .build();
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] could not load Cargo configuration
+
+Caused by:
+  failed to load TOML configuration from `[ROOT]/foo/.cargo/config.toml`
+
+Caused by:
+  failed to parse config at `alias.floats[0]`
+
+Caused by:
+  unsupported TOML configuration type `float`
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn unsupported_datetime_array() {
+    let p = project()
+        .file("src/lib.rs", "")
+        .file(
+            ".cargo/config.toml",
+            r#"
+                [alias]
+                datetimes = [07:32:00, 1979-05-27T07:32:00Z]
+            "#,
+        )
+        .build();
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] could not load Cargo configuration
+
+Caused by:
+  failed to load TOML configuration from `[ROOT]/foo/.cargo/config.toml`
+
+Caused by:
+  failed to parse config at `alias.datetimes[0]`
+
+Caused by:
+  unsupported TOML configuration type `datetime`
 
 "#]])
         .run();
@@ -103,7 +188,7 @@ fn bad4() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [CREATING] binary (application) `foo` package
-[ERROR] Failed to create package `foo` at `[ROOT]/foo/foo`
+[ERROR] failed to create package `foo` at `[ROOT]/foo/foo`
 
 Caused by:
   error in [ROOT]/foo/.cargo/config.toml: `cargo-new.vcs` expected a string, but found a boolean
@@ -163,7 +248,10 @@ fn invalid_global_config() {
     p.cargo("check -v")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] could not load Cargo configuration
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  could not load Cargo configuration
 
 Caused by:
   could not parse TOML configuration in `[ROOT]/foo/.cargo/config.toml`
@@ -173,7 +261,7 @@ Caused by:
     |
   1 | 4
     |  ^
-  expected `.`, `=`
+  key with no value, expected `=`
 
 "#]])
         .run();
@@ -334,8 +422,7 @@ fn bad_git_dependency() {
     let p = project()
         .file(
             "Cargo.toml",
-            &format!(
-                r#"
+            r#"
                 [package]
                 name = "foo"
                 version = "0.0.0"
@@ -343,43 +430,15 @@ fn bad_git_dependency() {
                 authors = []
 
                 [dependencies]
-                foo = {{ git = "{url}" }}
+                foo = { git = "file:.." }
             "#,
-                url = if cargo_uses_gitoxide() {
-                    "git://host.xz"
-                } else {
-                    "file:.."
-                }
-            ),
         )
         .file("src/lib.rs", "")
         .build();
 
-    if cargo_uses_gitoxide() {
-        p.cargo("check -v")
-            .with_status(101)
-            .with_stderr_data(str![[r#"
-[UPDATING] git repository `git://host.xz`
-[ERROR] failed to get `foo` as a dependency of package `foo v0.0.0 ([ROOT]/foo)`
-
-Caused by:
-  failed to load source for dependency `foo`
-
-Caused by:
-  Unable to update git://host.xz
-
-Caused by:
-  failed to clone into: [ROOT]/home/.cargo/git/db/_empty-[HASH]
-
-Caused by:
-  URL "git://host.xz" does not specify a path to a repository
-
-"#]])
-            .run();
-    } else {
-        p.cargo("check -v")
-            .with_status(101)
-            .with_stderr_data(str![[r#"
+    p.cargo("check -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
 [UPDATING] git repository `file:///`
 [ERROR] failed to get `foo` as a dependency of package `foo v0.0.0 ([ROOT]/foo)`
 
@@ -387,7 +446,7 @@ Caused by:
   failed to load source for dependency `foo`
 
 Caused by:
-  Unable to update file:///
+  unable to update file:///
 
 Caused by:
   failed to clone into: [ROOT]/home/.cargo/git/db/_empty-[HASH]
@@ -396,8 +455,7 @@ Caused by:
   'file:///' is not a valid local file URI; class=Config (7)
 
 "#]])
-            .run();
-    };
+        .run();
 }
 
 #[cargo_test]
@@ -419,16 +477,13 @@ fn bad_crate_type() {
         .file("src/lib.rs", "")
         .build();
 
-    p.cargo("build -v")
+    p.cargo("check")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] failed to run `rustc` to learn about crate-type bad_type information
+[CHECKING] foo v0.0.0 ([ROOT]/foo)
+[ERROR] unknown crate type: `bad_type`, expected one of: `lib`, `rlib`, `staticlib`, `dylib`, `cdylib`, `bin`, `proc-macro`
 
-Caused by:
-  process didn't exit successfully: `rustc - --crate-name ___ --print=file-names --crate-type bad_type` ([EXIT_STATUS]: 1)
-  --- stderr
-  [ERROR] unknown crate type: `bad_type`
-
+[ERROR] could not compile `foo` (lib) due to 1 previous error
 
 "#]])
         .run();
@@ -458,13 +513,34 @@ fn malformed_override() {
     p.cargo("check")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] invalid inline table
-expected `}`
- --> Cargo.toml:9:27
-  |
-9 |                 native = {
-  |                           ^
-  |
+[ERROR] missing assignment between key-value pairs, expected `=`
+  --> Cargo.toml:10:24
+   |
+10 |                   foo: "bar"
+   |                        ^
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn cargo_toml_missing_package_name() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+               [package]
+            "#,
+        )
+        .build();
+
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  missing field `package.name`
 
 "#]])
         .run();
@@ -663,74 +739,126 @@ fn unused_keys() {
         .file(
             "Cargo.toml",
             r#"
-               [package]
-               name = "foo"
-               version = "0.1.0"
-               edition = "2015"
-               authors = []
+paths = ["/path/to/override"]
 
-               [target.foo]
-               bar = "3"
-            "#,
+[package]
+name = "foo"
+version = "0.1.0"
+edition = "2015"
+authors = []
+unused = "foo"
+
+[target.foo]
+bar = "3"
+
+[lib]
+build = "foo"
+
+## Config fields
+
+[alias]
+b = "build"
+
+[build]
+jobs = 1
+
+[credential-alias]
+my-alias = ["/usr/bin/cargo-credential-example", "--argument", "value", "--flag"]
+
+[doc]
+browser = "chromium"
+
+[env]
+ENV_VAR_NAME = "value"
+
+[future-incompat-report]
+frequency = 'always'
+
+[cache]
+auto-clean-frequency = "1 day"
+
+[cargo-new]
+vcs = "none"
+
+[http]
+debug = false
+
+[install]
+root = "/some/path"
+
+[net]
+retry = 3
+
+[net.ssh]
+known-hosts = ["..."]
+
+[resolver]
+incompatible-rust-versions = "allow"
+
+[registries.alternative]
+index = "…"
+
+[registries.crates-io]
+protocol = "sparse"
+
+[registry]
+default = "…"
+
+[source.alternative]
+replace-with = "…"
+
+[target.'cfg(unix)']
+linker = "…"
+
+[term]
+quiet = false
+"#,
         )
         .file("src/lib.rs", "")
         .build();
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] unused manifest key: target.foo.bar
+[WARNING] Cargo.toml: unused manifest key: alias
+[HELP] alias is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: build
+[HELP] build is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: cache
+[HELP] cache is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: cargo-new
+[HELP] cargo-new is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: credential-alias
+[HELP] credential-alias is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: doc
+[HELP] doc is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: env
+[HELP] env is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: future-incompat-report
+[HELP] future-incompat-report is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: http
+[HELP] http is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: install
+[HELP] install is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: lib.build
+[WARNING] Cargo.toml: unused manifest key: net
+[HELP] net is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: package.unused
+[WARNING] Cargo.toml: unused manifest key: paths
+[HELP] paths is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: registries
+[HELP] registries is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: registry
+[HELP] registry is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: resolver
+[HELP] resolver is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: source
+[HELP] source is a valid .cargo/config.toml key
+[WARNING] Cargo.toml: unused manifest key: target.cfg(unix).linker
+[WARNING] Cargo.toml: unused manifest key: target.foo.bar
+[WARNING] Cargo.toml: unused manifest key: term
+[HELP] term is a valid .cargo/config.toml key
+[WARNING] `foo` (manifest) generated 21 warnings
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-
-"#]])
-        .run();
-
-    let p = project()
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-
-                name = "foo"
-                version = "0.5.0"
-                edition = "2015"
-                authors = ["wycats@example.com"]
-                bulid = "foo"
-            "#,
-        )
-        .file("src/lib.rs", "pub fn foo() {}")
-        .build();
-    p.cargo("check")
-        .with_stderr_data(str![[r#"
-[WARNING] unused manifest key: package.bulid
-[CHECKING] foo v0.5.0 ([ROOT]/foo)
-[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-
-"#]])
-        .run();
-
-    let p = project()
-        .at("bar")
-        .file(
-            "Cargo.toml",
-            r#"
-                [package]
-
-                name = "foo"
-                version = "0.5.0"
-                edition = "2015"
-                authors = ["wycats@example.com"]
-
-                [lib]
-                build = "foo"
-            "#,
-        )
-        .file("src/lib.rs", "pub fn foo() {}")
-        .build();
-    p.cargo("check")
-        .with_stderr_data(str![[r#"
-[WARNING] unused manifest key: lib.build
-[CHECKING] foo v0.5.0 ([ROOT]/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -745,7 +873,7 @@ fn unused_keys_in_virtual_manifest() {
             r#"
                 [workspace]
                 members = ["bar"]
-                bulid = "foo"
+                unused = "foo"
             "#,
         )
         .file("bar/Cargo.toml", &basic_manifest("bar", "0.0.1"))
@@ -753,7 +881,8 @@ fn unused_keys_in_virtual_manifest() {
         .build();
     p.cargo("check --workspace")
         .with_stderr_data(str![[r#"
-[WARNING] [ROOT]/foo/Cargo.toml: unused manifest key: workspace.bulid
+[WARNING] Cargo.toml: unused manifest key: workspace.unused
+[WARNING] workspace (manifest) generated 1 warning
 [CHECKING] bar v0.0.1 ([ROOT]/foo/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -822,23 +951,22 @@ fn dev_dependencies2() {
         .file("a/src/lib.rs", "")
         .build();
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `dev_dependencies` is deprecated in favor of `dev-dependencies` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `dev_dependencies` is deprecated in favor of `dev-dependencies` and will not work in the 2024 edition
 (in the `foo` package)
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]]).run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn dev_dependencies2_2024() {
     let p = project()
         .file(
             "Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "foo"
                 version = "0.1.0"
@@ -861,7 +989,6 @@ fn dev_dependencies2_2024() {
         .file("a/src/lib.rs", "")
         .build();
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -904,8 +1031,9 @@ fn dev_dependencies2_conflict() {
         .file("a/src/lib.rs", "")
         .build();
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `dev_dependencies` is redundant with `dev-dependencies`, preferring `dev-dependencies` in the `foo` package
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] Cargo.toml: `dev_dependencies` is redundant with `dev-dependencies`, preferring `dev-dependencies` in the `foo` package
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -925,6 +1053,9 @@ fn build_dependencies2() {
 
                 [build_dependencies]
                 a = {path = "a"}
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -935,28 +1066,30 @@ fn build_dependencies2() {
                 name = "a"
                 version = "0.0.1"
                 edition = "2015"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("a/src/lib.rs", "")
         .build();
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `build_dependencies` is deprecated in favor of `build-dependencies` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `build_dependencies` is deprecated in favor of `build-dependencies` and will not work in the 2024 edition
 (in the `foo` package)
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]]).run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn build_dependencies2_2024() {
     let p = project()
         .file(
             "Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "foo"
                 version = "0.1.0"
@@ -979,7 +1112,6 @@ fn build_dependencies2_2024() {
         .file("a/src/lib.rs", "")
         .build();
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -1007,6 +1139,9 @@ fn build_dependencies2_conflict() {
                 a = {path = "a"}
                 [build_dependencies]
                 a = {path = "a"}
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -1017,13 +1152,17 @@ fn build_dependencies2_conflict() {
                 name = "a"
                 version = "0.0.1"
                 edition = "2015"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("a/src/lib.rs", "")
         .build();
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `build_dependencies` is redundant with `build-dependencies`, preferring `build-dependencies` in the `foo` package
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] Cargo.toml: `build_dependencies` is redundant with `build-dependencies`, preferring `build-dependencies` in the `foo` package
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1051,8 +1190,9 @@ fn lib_crate_type2() {
         .build();
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `crate_type` is deprecated in favor of `crate-type` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `crate_type` is deprecated in favor of `crate-type` and will not work in the 2024 edition
 (in the `foo` library target)
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1060,14 +1200,12 @@ fn lib_crate_type2() {
         .run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn lib_crate_type2_2024() {
     let p = project()
         .file(
             "Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "foo"
                 version = "0.5.0"
@@ -1082,7 +1220,6 @@ fn lib_crate_type2_2024() {
         .file("src/lib.rs", "pub fn foo() {}")
         .build();
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -1116,7 +1253,8 @@ fn lib_crate_type2_conflict() {
         .file("src/lib.rs", "pub fn foo() {}")
         .build();
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `crate_type` is redundant with `crate-type`, preferring `crate-type` in the `foo` library target
+[WARNING] Cargo.toml: `crate_type` is redundant with `crate-type`, preferring `crate-type` in the `foo` library target
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1145,8 +1283,9 @@ fn bin_crate_type2() {
         .build();
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `crate_type` is deprecated in favor of `crate-type` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `crate_type` is deprecated in favor of `crate-type` and will not work in the 2024 edition
 (in the `foo` binary target)
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1154,14 +1293,12 @@ fn bin_crate_type2() {
         .run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn bin_crate_type2_2024() {
     let p = project()
         .file(
             "Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "foo"
                 version = "0.5.0"
@@ -1177,7 +1314,6 @@ fn bin_crate_type2_2024() {
         .file("src/main.rs", "fn main() {}")
         .build();
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -1212,7 +1348,8 @@ fn bin_crate_type2_conflict() {
         .file("src/main.rs", "fn main() {}")
         .build();
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `crate_type` is redundant with `crate-type`, preferring `crate-type` in the `foo` binary target
+[WARNING] Cargo.toml: `crate_type` is redundant with `crate-type`, preferring `crate-type` in the `foo` binary target
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1257,10 +1394,11 @@ fn examples_crate_type2() {
         .build();
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `crate_type` is deprecated in favor of `crate-type` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `crate_type` is deprecated in favor of `crate-type` and will not work in the 2024 edition
 (in the `ex` example target)
-[WARNING] `crate_type` is deprecated in favor of `crate-type` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `crate_type` is deprecated in favor of `crate-type` and will not work in the 2024 edition
 (in the `goodbye` example target)
+[WARNING] `foo` (manifest) generated 2 warnings
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1268,14 +1406,12 @@ fn examples_crate_type2() {
         .run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn examples_crate_type2_2024() {
     let p = project()
         .file(
             "Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "foo"
                 version = "0.5.0"
@@ -1307,7 +1443,6 @@ fn examples_crate_type2_2024() {
         )
         .build();
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -1359,8 +1494,9 @@ fn examples_crate_type2_conflict() {
         )
         .build();
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `crate_type` is redundant with `crate-type`, preferring `crate-type` in the `ex` example target
-[WARNING] `crate_type` is redundant with `crate-type`, preferring `crate-type` in the `goodbye` example target
+[WARNING] Cargo.toml: `crate_type` is redundant with `crate-type`, preferring `crate-type` in the `ex` example target
+[WARNING] Cargo.toml: `crate_type` is redundant with `crate-type`, preferring `crate-type` in the `goodbye` example target
+[WARNING] `foo` (manifest) generated 2 warnings
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1399,9 +1535,10 @@ fn cargo_platform_build_dependencies2() {
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `build_dependencies` is deprecated in favor of `build-dependencies` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `build_dependencies` is deprecated in favor of `build-dependencies` and will not work in the 2024 edition
 (in the `[HOST_TARGET]` platform target)
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [COMPILING] build v0.5.0 ([ROOT]/foo/build)
 [COMPILING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -1411,7 +1548,7 @@ fn cargo_platform_build_dependencies2() {
         .run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn cargo_platform_build_dependencies2_2024() {
     let host = rustc_host();
     let p = project()
@@ -1419,8 +1556,6 @@ fn cargo_platform_build_dependencies2_2024() {
             "Cargo.toml",
             &format!(
                 r#"
-                    cargo-features = ["edition2024"]
-
                     [package]
                     name = "foo"
                     version = "0.5.0"
@@ -1444,7 +1579,6 @@ fn cargo_platform_build_dependencies2_2024() {
         .build();
 
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -1491,8 +1625,9 @@ fn cargo_platform_build_dependencies2_conflict() {
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `build_dependencies` is redundant with `build-dependencies`, preferring `build-dependencies` in the `[HOST_TARGET]` platform target
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] Cargo.toml: `build_dependencies` is redundant with `build-dependencies`, preferring `build-dependencies` in the `[HOST_TARGET]` platform target
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [COMPILING] build v0.5.0 ([ROOT]/foo/build)
 [COMPILING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -1533,9 +1668,10 @@ fn cargo_platform_dev_dependencies2() {
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `dev_dependencies` is deprecated in favor of `dev-dependencies` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `dev_dependencies` is deprecated in favor of `dev-dependencies` and will not work in the 2024 edition
 (in the `[HOST_TARGET]` platform target)
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1543,7 +1679,7 @@ fn cargo_platform_dev_dependencies2() {
         .run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn cargo_platform_dev_dependencies2_2024() {
     let host = rustc_host();
     let p = project()
@@ -1551,8 +1687,6 @@ fn cargo_platform_dev_dependencies2_2024() {
             "Cargo.toml",
             &format!(
                 r#"
-                    cargo-features = ["edition2024"]
-
                     [package]
                     name = "foo"
                     version = "0.5.0"
@@ -1575,7 +1709,6 @@ fn cargo_platform_dev_dependencies2_2024() {
         .build();
 
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -1621,8 +1754,9 @@ fn cargo_platform_dev_dependencies2_conflict() {
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `dev_dependencies` is redundant with `dev-dependencies`, preferring `dev-dependencies` in the `[HOST_TARGET]` platform target
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] Cargo.toml: `dev_dependencies` is redundant with `dev-dependencies`, preferring `dev-dependencies` in the `[HOST_TARGET]` platform target
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1644,6 +1778,9 @@ fn default_features2() {
 
                 [dependencies]
                 a = { path = "a", features = ["f1"], default_features = false }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -1659,15 +1796,19 @@ fn default_features2() {
                 [features]
                 default = ["f1"]
                 f1 = []
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("a/src/lib.rs", "")
         .build();
 
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `default_features` is deprecated in favor of `default-features` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `default_features` is deprecated in favor of `default-features` and will not work in the 2024 edition
 (in the `a` dependency)
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [CHECKING] a v0.1.0 ([ROOT]/foo/a)
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -1675,14 +1816,12 @@ fn default_features2() {
 "#]]).run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn default_features2_2024() {
     let p = project()
         .file(
             "Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "foo"
                 version = "0.1.0"
@@ -1712,7 +1851,6 @@ fn default_features2_2024() {
         .build();
 
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -1739,6 +1877,9 @@ fn default_features2_conflict() {
 
                 [dependencies]
                 a = { path = "a", features = ["f1"], default-features = false, default_features = false }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -1754,14 +1895,18 @@ fn default_features2_conflict() {
                 [features]
                 default = ["f1"]
                 f1 = []
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("a/src/lib.rs", "")
         .build();
 
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `default_features` is redundant with `default-features`, preferring `default-features` in the `a` dependency
-[LOCKING] 2 packages to latest compatible versions
+[WARNING] Cargo.toml: `default_features` is redundant with `default-features`, preferring `default-features` in the `a` dependency
+[WARNING] `foo` (manifest) generated 1 warning
+[LOCKING] 1 package to highest compatible version
 [CHECKING] a v0.1.0 ([ROOT]/foo/a)
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -1794,6 +1939,9 @@ fn workspace_default_features2() {
 
                 [dependencies]
                 dep_workspace_only.workspace = true
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("workspace_only/src/lib.rs", "")
@@ -1805,6 +1953,9 @@ fn workspace_default_features2() {
                 version = "0.1.0"
                 edition = "2015"
                 authors = []
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("dep_workspace_only/src/lib.rs", "")
@@ -1819,6 +1970,9 @@ fn workspace_default_features2() {
 
                 [dependencies]
                 dep_package_only = { workspace = true, default_features = true }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("package_only/src/lib.rs", "")
@@ -1830,6 +1984,9 @@ fn workspace_default_features2() {
                 version = "0.1.0"
                 edition = "2015"
                 authors = []
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("dep_package_only/src/lib.rs", "")
@@ -1838,14 +1995,14 @@ fn workspace_default_features2() {
     p.cargo("check")
         .with_stderr_data(
             str![[r#"
-[WARNING] [ROOT]/foo/workspace_only/Cargo.toml: `default_features` is deprecated in favor of `default-features` and will not work in the 2024 edition
-(in the `dep_workspace_only` dependency)
-[LOCKING] 4 packages to latest compatible versions
 [CHECKING] dep_package_only v0.1.0 ([ROOT]/foo/dep_package_only)
 [CHECKING] dep_workspace_only v0.1.0 ([ROOT]/foo/dep_workspace_only)
 [CHECKING] package_only v0.1.0 ([ROOT]/foo/package_only)
 [CHECKING] workspace_only v0.1.0 ([ROOT]/foo/workspace_only)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[WARNING] workspace_only/Cargo.toml: `default_features` is deprecated in favor of `default-features` and will not work in the 2024 edition
+(in the `dep_workspace_only` dependency)
+[WARNING] `workspace_only` (manifest) generated 1 warning
 
 "#]]
             .unordered(),
@@ -1853,7 +2010,7 @@ fn workspace_default_features2() {
         .run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn workspace_default_features2_2024() {
     let p = project()
         .file(
@@ -1870,8 +2027,6 @@ fn workspace_default_features2_2024() {
         .file(
             "workspace_only/Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "workspace_only"
                 version = "0.1.0"
@@ -1886,8 +2041,6 @@ fn workspace_default_features2_2024() {
         .file(
             "dep_workspace_only/Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "dep_workspace_only"
                 version = "0.1.0"
@@ -1899,8 +2052,6 @@ fn workspace_default_features2_2024() {
         .file(
             "package_only/Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "package_only"
                 version = "0.1.0"
@@ -1915,8 +2066,6 @@ fn workspace_default_features2_2024() {
         .file(
             "dep_package_only/Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "dep_package_only"
                 version = "0.1.0"
@@ -1928,7 +2077,6 @@ fn workspace_default_features2_2024() {
         .build();
 
     p.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to load manifest for workspace member `[ROOT]/foo/workspace_only`
@@ -1964,8 +2112,9 @@ fn lib_proc_macro2() {
 
     foo.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `proc_macro` is deprecated in favor of `proc-macro` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `proc_macro` is deprecated in favor of `proc-macro` and will not work in the 2024 edition
 (in the `foo` library target)
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1973,14 +2122,12 @@ fn lib_proc_macro2() {
         .run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn lib_proc_macro2_2024() {
     let foo = project()
         .file(
             "Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "foo"
                 version = "0.1.0"
@@ -1993,7 +2140,6 @@ fn lib_proc_macro2_2024() {
         .build();
 
     foo.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -2025,7 +2171,8 @@ fn lib_proc_macro2_conflict() {
         .build();
 
     foo.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `proc_macro` is redundant with `proc-macro`, preferring `proc-macro` in the `foo` library target
+[WARNING] Cargo.toml: `proc_macro` is redundant with `proc-macro`, preferring `proc-macro` in the `foo` library target
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -2055,8 +2202,9 @@ fn bin_proc_macro2() {
 
     foo.cargo("check")
         .with_stderr_data(str![[r#"
-[WARNING] `proc_macro` is deprecated in favor of `proc-macro` and will not work in the 2024 edition
+[WARNING] Cargo.toml: `proc_macro` is deprecated in favor of `proc-macro` and will not work in the 2024 edition
 (in the `foo` binary target)
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -2064,14 +2212,12 @@ fn bin_proc_macro2() {
         .run();
 }
 
-#[cargo_test(nightly, reason = "edition2024 is not stable")]
+#[cargo_test]
 fn bin_proc_macro2_2024() {
     let foo = project()
         .file(
             "Cargo.toml",
             r#"
-                cargo-features = ["edition2024"]
-
                 [package]
                 name = "foo"
                 version = "0.5.0"
@@ -2088,7 +2234,6 @@ fn bin_proc_macro2_2024() {
         .build();
 
     foo.cargo("check")
-        .masquerade_as_nightly_cargo(&["edition2024"])
         .with_status(101)
         .with_stderr_data(str![[r#"
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
@@ -2124,7 +2269,8 @@ fn bin_proc_macro2_conflict() {
         .build();
 
     foo.cargo("check").with_stderr_data(str![[r#"
-[WARNING] `proc_macro` is redundant with `proc-macro`, preferring `proc-macro` in the `foo` binary target
+[WARNING] Cargo.toml: `proc_macro` is redundant with `proc-macro`, preferring `proc-macro` in the `foo` binary target
+[WARNING] `foo` (manifest) generated 1 warning
 [CHECKING] foo v0.5.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -2151,8 +2297,7 @@ Caused by:
     |
   1 | [bar] baz = 2
     |       ^
-  invalid table header
-  expected newline, `#`
+  unexpected key or value, expected newline, `#`
 
 "#]])
         .run();
@@ -2191,6 +2336,46 @@ Caused by:
         .run();
 }
 
+#[cargo_test(public_network_test)]
+fn github_pull_request_url() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.0.0"
+                edition = "2015"
+                authors = []
+
+                [dependencies.bar]
+                git = "https://github.com/rust-lang/does-not-exist/pull/123"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("check -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[UPDATING] git repository `https://github.com/rust-lang/does-not-exist/pull/123`
+...
+[ERROR] failed to get `bar` as a dependency of package `foo v0.0.0 ([ROOT]/foo)`
+
+Caused by:
+  failed to load source for dependency `bar`
+
+Caused by:
+  unable to update https://github.com/rust-lang/does-not-exist/pull/123
+...
+  [NOTE] GitHub url https://github.com/rust-lang/does-not-exist/pull/123 is not a repository
+  [HELP] to specify a pull request as a dependency, replace the dependency with:
+         `git = "https://github.com/rust-lang/does-not-exist.git" rev = "refs/pull/123/head"`
+...
+"#]])
+        .run();
+}
+
 #[cargo_test]
 fn fragment_in_git_url() {
     let p = project()
@@ -2212,11 +2397,9 @@ fn fragment_in_git_url() {
 
     p.cargo("check -v")
         .with_status(101)
-        // the following is needed as gitoxide has a different error message
-        // ...
-        // [..]127.0.0.1[..]
         .with_stderr_data(str![[r#"
-[WARNING] URL fragment `#foo` in git URL is ignored for dependency (bar). If you were trying to specify a specific git revision, use `rev = "foo"` in the dependency declaration.
+[WARNING] Cargo.toml: URL fragment `#foo` in git URL is ignored for dependency (bar). If you were trying to specify a specific git revision, use `rev = "foo"` in the dependency declaration.
+[WARNING] `foo` (manifest) generated 1 warning
 [UPDATING] git repository `http://127.0.0.1/#foo`
 ...
 [ERROR] failed to get `bar` as a dependency of package `foo v0.0.0 ([ROOT]/foo)`
@@ -2225,7 +2408,7 @@ Caused by:
   failed to load source for dependency `bar`
 
 Caused by:
-  Unable to update http://127.0.0.1/#foo
+  unable to update http://127.0.0.1/#foo
 
 Caused by:
   failed to clone into: [ROOT]/home/.cargo/git/db/_empty-[HASH]
@@ -2287,7 +2470,7 @@ Caused by:
   failed to load source for dependency `bar`
 
 Caused by:
-  Unable to update registry `crates-io`
+  unable to update registry `crates-io`
 
 Caused by:
   could not find a configured source with the name `bar` when attempting to lookup `crates-io` (configuration in `[ROOT]/foo/.cargo/config.toml`)
@@ -2332,7 +2515,7 @@ Caused by:
   failed to load source for dependency `bar`
 
 Caused by:
-  Unable to update registry `crates-io`
+  unable to update registry `crates-io`
 
 Caused by:
   detected a cycle of `replace-with` sources, the source `crates-io` is eventually replaced with itself (configuration in `[ROOT]/foo/.cargo/config.toml`)
@@ -2380,7 +2563,7 @@ Caused by:
   failed to load source for dependency `bar`
 
 Caused by:
-  Unable to update registry `crates-io`
+  unable to update registry `crates-io`
 
 Caused by:
   detected a cycle of `replace-with` sources, the source `crates-io` is eventually replaced with itself (configuration in `[ROOT]/foo/.cargo/config.toml`)
@@ -2658,7 +2841,40 @@ fn bad_dependency() {
   |
 9 |                 bar = 3
   |                       ^
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn bad_dependency_true_literal() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.0.0"
+                edition = "2015"
+                authors = []
+
+                [dependencies]
+                bar = true
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] invalid type: boolean `true`, expected a version string like "0.9.8" or a detailed dependency like { version = "0.9.8" }
+       [NOTE] if you meant to use a workspace member, you can write
+        dep.workspace = true
+ --> Cargo.toml:9:23
   |
+9 |                 bar = true
+  |                       ^^^^
 
 "#]])
         .run();
@@ -2686,12 +2902,11 @@ fn bad_debuginfo() {
     p.cargo("check")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] invalid value: string "a", expected a boolean, 0, 1, 2, "line-tables-only", or "line-directives-only"
+[ERROR] invalid value: string "a", expected a boolean, 0, 1, 2, "none", "limited", "full", "line-tables-only", or "line-directives-only"
  --> Cargo.toml:9:25
   |
 9 |                 debug = 'a'
   |                         ^^^
-  |
 
 "#]])
         .run();
@@ -2719,12 +2934,11 @@ fn bad_debuginfo2() {
     p.cargo("check")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] invalid type: floating point `3.6`, expected a boolean, 0, 1, 2, "line-tables-only", or "line-directives-only"
+[ERROR] invalid type: floating point `3.6`, expected a boolean, 0, 1, 2, "none", "limited", "full", "line-tables-only", or "line-directives-only"
  --> Cargo.toml:9:25
   |
 9 |                 debug = 3.6
   |                         ^^^
-  |
 
 "#]])
         .run();
@@ -2750,12 +2964,11 @@ fn bad_opt_level() {
     p.cargo("check")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] invalid type: integer `3`, expected a boolean or string
+[ERROR] invalid type: integer `3`, expected a boolean, string or array
  --> Cargo.toml:7:25
   |
 7 |                 build = 3
   |                         ^
-  |
 
 "#]])
         .run();
@@ -2775,14 +2988,18 @@ fn warn_semver_metadata() {
 
             [dependencies]
             bar = "1.0.0+1234"
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
         .build();
     p.cargo("check").with_stderr_data(str![[r#"
-[WARNING] version requirement `1.0.0+1234` for dependency `bar` includes semver metadata which will be ignored, removing the metadata is recommended to avoid confusion
+[WARNING] Cargo.toml: version requirement `1.0.0+1234` for dependency `bar` includes semver metadata which will be ignored, removing the metadata is recommended to avoid confusion
+[WARNING] `foo` (manifest) generated 1 warning
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
 [CHECKING] bar v1.0.0
@@ -2959,10 +3176,10 @@ fn bad_target_links_overrides() {
 
     p.cargo("check")
         .with_status(101)
-        .with_stderr_data(str![[r"
-[ERROR] Only `-l` and `-L` flags are allowed in target config `target.[..].rustc-flags` (in [..]foo/.cargo/config.toml): `foo`
+        .with_stderr_data(str![[r#"
+[ERROR] only `-l` and `-L` flags are allowed in target config `target.[HOST_TARGET].rustc-flags` (in [ROOT]/foo/.cargo/config.toml): `foo`
 
-"]])
+"#]])
         .run();
 
     p.change_file(
@@ -3046,16 +3263,940 @@ fn bad_trim_paths() {
         .file("src/lib.rs", "")
         .build();
 
-    p.cargo("check -Ztrim-paths")
+    p.cargo("check")
+        .arg("-Ztrim-paths")
         .masquerade_as_nightly_cargo(&["trim-paths"])
         .with_status(101)
         .with_stderr_data(str![[r#"
-[ERROR] expected a boolean, "none", "diagnostics", "macro", "object", "all", or an array with these options
+[ERROR] unknown variant `split-debuginfo`, expected one of `none`, `object`, `all`
  --> Cargo.toml:8:30
   |
 8 |                 trim-paths = "split-debuginfo"
   |                              ^^^^^^^^^^^^^^^^^
-  |
+
+"#]])
+        .run();
+}
+
+fn bad_target_name_project(target: &str, path: &str, name: &str) -> Project {
+    project()
+        .file(
+            "Cargo.toml",
+            &format!(
+                r#"
+[package]
+name = "bad-{target}-name"
+edition = "2024"
+
+[[{target}]]
+name = "{name}"
+"#
+            ),
+        )
+        .file("src/lib.rs", "")
+        .file(format!("{path}/{name}"), "")
+        .build()
+}
+
+#[cargo_test]
+fn bad_bin_name() {
+    bad_target_name_project("bin", "src/bin", "bin.rs")
+        .cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  can't find `bin.rs` bin at `src/bin/bin.rs.rs` or `src/bin/bin.rs/main.rs`. Please specify bin.path if you want to use a non-default path.
+
+  [HELP] a bin with a similar name exists: `bin`
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn bad_example_name() {
+    bad_target_name_project("example", "examples", "example.rs")
+        .cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] Cargo.toml: can't find `example.rs` example at `examples/example.rs.rs` or `examples/example.rs/main.rs`. Please specify example.path if you want to use a non-default path.
+
+[HELP] a example with a similar name exists: `example`
+[ERROR] could not parse `bad-example-name` (manifest) due to 1 previous error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn bad_test_name() {
+    bad_target_name_project("test", "tests", "test.rs")
+        .cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] Cargo.toml: can't find `test.rs` test at `tests/test.rs.rs` or `tests/test.rs/main.rs`. Please specify test.path if you want to use a non-default path.
+
+[HELP] a test with a similar name exists: `test`
+[ERROR] could not parse `bad-test-name` (manifest) due to 1 previous error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn bad_bench_name() {
+    bad_target_name_project("bench", "benches", "bench.rs")
+        .cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] Cargo.toml: can't find `bench.rs` bench at `benches/bench.rs.rs` or `benches/bench.rs/main.rs`. Please specify bench.path if you want to use a non-default path.
+
+[HELP] a bench with a similar name exists: `bench`
+[ERROR] could not parse `bad-bench-name` (manifest) due to 1 previous error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn non_existing_test() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2015"
+
+                [lib]
+                name = "foo"
+                path = "src/lib.rs"
+
+                [[test]]
+                name = "hello"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("check --tests -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] Cargo.toml: can't find `hello` test at `tests/hello.rs` or `tests/hello/main.rs`. Please specify test.path if you want to use a non-default path.
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn non_existing_example() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2015"
+
+                [lib]
+                name = "foo"
+                path = "src/lib.rs"
+
+                [[example]]
+                name = "hello"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("check --examples -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] Cargo.toml: can't find `hello` example at `examples/hello.rs` or `examples/hello/main.rs`. Please specify example.path if you want to use a non-default path.
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn non_existing_benchmark() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2015"
+
+                [lib]
+                name = "foo"
+                path = "src/lib.rs"
+
+                [[bench]]
+                name = "hello"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("check --benches -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] Cargo.toml: can't find `hello` bench at `benches/hello.rs` or `benches/hello/main.rs`. Please specify bench.path if you want to use a non-default path.
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn non_existing_binary() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/lib.rs", "")
+        .file("src/bin/ehlo.rs", "")
+        .build();
+
+    p.cargo("check -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  can't find `foo` bin at `src/bin/foo.rs` or `src/bin/foo/main.rs`. Please specify bin.path if you want to use a non-default path.
+
+  [HELP] a bin with a similar name exists: `ehlo`
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn commonly_wrong_path_of_test() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2015"
+
+                [lib]
+                name = "foo"
+                path = "src/lib.rs"
+
+                [[test]]
+                name = "foo"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file("test/foo.rs", "")
+        .build();
+
+    p.cargo("check --tests -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] Cargo.toml: can't find `foo` test at default paths, but found a file at `test/foo.rs`.
+Perhaps rename the file to `tests/foo.rs` for target auto-discovery, or specify test.path if you want to use a non-default path.
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn commonly_wrong_path_of_example() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2015"
+
+                [lib]
+                name = "foo"
+                path = "src/lib.rs"
+
+                [[example]]
+                name = "foo"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file("example/foo.rs", "")
+        .build();
+
+    p.cargo("check --examples -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] Cargo.toml: can't find `foo` example at default paths, but found a file at `example/foo.rs`.
+Perhaps rename the file to `examples/foo.rs` for target auto-discovery, or specify example.path if you want to use a non-default path.
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn commonly_wrong_path_of_benchmark() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2015"
+
+                [lib]
+                name = "foo"
+                path = "src/lib.rs"
+
+                [[bench]]
+                name = "foo"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file("bench/foo.rs", "")
+        .build();
+
+    p.cargo("check --benches -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] Cargo.toml: can't find `foo` bench at default paths, but found a file at `bench/foo.rs`.
+Perhaps rename the file to `benches/foo.rs` for target auto-discovery, or specify bench.path if you want to use a non-default path.
+[ERROR] could not parse `foo` (manifest) due to 1 previous error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn commonly_wrong_path_binary() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/lib.rs", "")
+        .file("src/bins/foo.rs", "")
+        .build();
+
+    p.cargo("check -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  can't find `foo` bin at default paths, but found a file at `src/bins/foo.rs`.
+  Perhaps rename the file to `src/bin/foo.rs` for target auto-discovery, or specify bin.path if you want to use a non-default path.
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn commonly_wrong_path_subdir_binary() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/lib.rs", "")
+        .file("src/bins/foo/main.rs", "")
+        .build();
+
+    p.cargo("check -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  can't find `foo` bin at default paths, but found a file at `src/bins/foo/main.rs`.
+  Perhaps rename the file to `src/bin/foo/main.rs` for target auto-discovery, or specify bin.path if you want to use a non-default path.
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn found_multiple_target_files() {
+    let p = project()
+        .file("Cargo.toml", &basic_bin_manifest("foo"))
+        .file("src/lib.rs", "")
+        .file("src/bin/foo.rs", "")
+        .file("src/bin/foo/main.rs", "")
+        .build();
+
+    p.cargo("check -v")
+        .with_status(101)
+        // Don't assert the inferred paths since the order is non-deterministic.
+        .with_stderr_data(str![[r#"
+[ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
+
+Caused by:
+  cannot infer path for `foo` bin
+  Cargo doesn't know which to use because multiple target files found at `src/bin/foo[..]rs` and `src/bin/foo[..].rs`.
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn legacy_binary_paths_warnings() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2015"
+                authors = []
+
+                [[bin]]
+                name = "bar"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file("src/main.rs", "fn main() {}")
+        .build();
+
+    p.cargo("check -v")
+        .with_stderr_data(str![[r#"
+[WARNING] Cargo.toml: An explicit [[bin]] section is specified in Cargo.toml which currently
+disables Cargo from automatically inferring other binary targets.
+This inference behavior will change in the Rust 2018 edition and the following
+files will be included as a binary target:
+
+* src/main.rs
+
+This is likely to break cargo build or cargo test as these files may not be
+ready to be compiled as a binary target today. You can future-proof yourself
+and disable this warning by adding `autobins = false` to your [package]
+section. You may also move the files to a location where Cargo would not
+automatically infer them to be a target, such as in subfolders.
+
+For more information on this warning you can consult
+https://github.com/rust-lang/cargo/issues/5330
+[WARNING] Cargo.toml: path `src/main.rs` was erroneously implicitly accepted for binary `bar`,
+please set bin.path in Cargo.toml
+[WARNING] `foo` (manifest) generated 2 warnings
+[CHECKING] foo v1.0.0 ([ROOT]/foo)
+[RUNNING] `rustc [..]`
+[RUNNING] `rustc [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+
+"#]])
+        .run();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2015"
+                authors = []
+
+                [[bin]]
+                name = "bar"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .file("src/bin/main.rs", "fn main() {}")
+        .build();
+
+    p.cargo("check -v")
+        .with_stderr_data(str![[r#"
+[WARNING] Cargo.toml: An explicit [[bin]] section is specified in Cargo.toml which currently
+disables Cargo from automatically inferring other binary targets.
+This inference behavior will change in the Rust 2018 edition and the following
+files will be included as a binary target:
+
+* src/bin/main.rs
+
+This is likely to break cargo build or cargo test as these files may not be
+ready to be compiled as a binary target today. You can future-proof yourself
+and disable this warning by adding `autobins = false` to your [package]
+section. You may also move the files to a location where Cargo would not
+automatically infer them to be a target, such as in subfolders.
+
+For more information on this warning you can consult
+https://github.com/rust-lang/cargo/issues/5330
+[WARNING] Cargo.toml: path `src/bin/main.rs` was erroneously implicitly accepted for binary `bar`,
+please set bin.path in Cargo.toml
+[WARNING] `foo` (manifest) generated 2 warnings
+[CHECKING] foo v1.0.0 ([ROOT]/foo)
+[RUNNING] `rustc [..]`
+[RUNNING] `rustc [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+
+"#]])
+        .run();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2015"
+                authors = []
+
+                [[bin]]
+                name = "bar"
+            "#,
+        )
+        .file("src/bar.rs", "fn main() {}")
+        .build();
+
+    p.cargo("check -v")
+        .with_stderr_data(str![[r#"
+[WARNING] Cargo.toml: path `src/bar.rs` was erroneously implicitly accepted for binary `bar`,
+please set bin.path in Cargo.toml
+[WARNING] `foo` (manifest) generated 1 warning
+[CHECKING] foo v1.0.0 ([ROOT]/foo)
+[RUNNING] `rustc [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn nonexistent_example_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[example]]
+                name = "bar"
+                path = "examples/null.rs"
+            "#,
+        )
+        .build();
+    p.cargo("check --examples")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] can't find example `bar` at path `[ROOT]/foo/examples/null.rs`
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn nonexistent_library_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [lib]
+                path = "src/null.rs"
+            "#,
+        )
+        .file("src/lib.rs", "fn bar() {}")
+        .build();
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] can't find lib `foo` at path `[ROOT]/foo/src/null.rs`
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn nonexistent_binary_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[bin]]
+                name = "null"
+                path = "src/null.rs"
+            "#,
+        )
+        .build();
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] can't find bin `null` at path `[ROOT]/foo/src/null.rs`
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn nonexistent_test_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[test]]
+                name = "null"
+                path = "src/null.rs"
+            "#,
+        )
+        .build();
+    p.cargo("test")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] can't find integration-test `null` at path `[ROOT]/foo/src/null.rs`
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn nonexistent_bench_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[bench]]
+                name = "null"
+                path = "src/null.rs"
+            "#,
+        )
+        .build();
+    p.cargo("bench")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] can't find bench `null` at path `[ROOT]/foo/src/null.rs`
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_example_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[example]]
+                name = "bar"
+                path = "examples/bar"
+            "#,
+        )
+        .file("examples/bar/.temp", "")
+        .build();
+    p.cargo("check --example bar")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/examples/bar` for example `bar` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_library_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [lib]
+                path = "src/null"
+            "#,
+        )
+        .file("src/null/.temp", "")
+        .build();
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/src/null` for lib `foo` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_binary_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[bin]]
+                name = "null"
+                path = "src/null"
+            "#,
+        )
+        .file("src/null/.temp", "")
+        .build();
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/src/null` for bin `null` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_test_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[test]]
+                name = "null"
+                path = "src/null"
+            "#,
+        )
+        .file("src/null/.temp", "")
+        .build();
+    p.cargo("test")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/src/null` for integration-test `null` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_bench_target_path() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[bench]]
+                name = "null"
+                path = "src/null"
+            "#,
+        )
+        .file("src/null/.temp", "")
+        .build();
+    p.cargo("bench")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/src/null` for bench `null` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_example_target_path_with_entrypoint() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[example]]
+                name = "bar"
+                path = "examples/bar"
+            "#,
+        )
+        .file("examples/bar/main.rs", "fn main() {}")
+        .build();
+    p.cargo("check --example bar")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/examples/bar` for example `bar` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+  = [HELP] an entry point exists at `[ROOT]/foo/examples/bar/main.rs`
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_library_target_path_with_entrypoint() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [lib]
+                path = "src/null"
+            "#,
+        )
+        .file("src/null/lib.rs", "fn foo() {}")
+        .build();
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/src/null` for lib `foo` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+  = [HELP] an entry point exists at `[ROOT]/foo/src/null/lib.rs`
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_binary_target_path_with_entrypoint() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[bin]]
+                name = "null"
+                path = "src/null"
+            "#,
+        )
+        .file("src/null/main.rs", "fn main() {}")
+        .build();
+    p.cargo("check")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/src/null` for bin `null` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+  = [HELP] an entry point exists at `[ROOT]/foo/src/null/main.rs`
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_test_target_path_with_entrypoint() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[test]]
+                name = "null"
+                path = "src/null"
+            "#,
+        )
+        .file("src/null/main.rs", "fn main() {}")
+        .build();
+    p.cargo("test")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/src/null` for integration-test `null` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+  = [HELP] an entry point exists at `[ROOT]/foo/src/null/main.rs`
+[ERROR] could not compile due to 1 previous target resolution error
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn directory_as_bench_target_path_with_entrypoint() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "1.0.0"
+                edition = "2024"
+
+                [[bench]]
+                name = "null"
+                path = "src/null"
+            "#,
+        )
+        .file("src/null/main.rs", "fn main() {}")
+        .build();
+    p.cargo("bench")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] path `[ROOT]/foo/src/null` for bench `null` is a directory, but a source file was expected.
+ --> [ROOT]/foo/Cargo.toml
+  = [HELP] an entry point exists at `[ROOT]/foo/src/null/main.rs`
+[ERROR] could not compile due to 1 previous target resolution error
 
 "#]])
         .run();

@@ -1,6 +1,6 @@
 //! Tests for profile overrides (build-override and per-package overrides).
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::registry::Package;
 use cargo_test_support::{basic_lib_manifest, basic_manifest, project, str};
 
@@ -24,6 +24,9 @@ fn profile_override_basic() {
 
                 [profile.dev.package.bar]
                 opt-level = 3
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -33,7 +36,7 @@ fn profile_override_basic() {
 
     p.cargo("check -v")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [CHECKING] bar v0.5.0 ([ROOT]/foo/bar)
 [RUNNING] `rustc --crate-name bar [..] -C opt-level=3 [..]`
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
@@ -66,6 +69,9 @@ fn profile_override_warnings() {
 
                 [profile.dev.package."bar:1.2.3"]
                 opt-level = 3
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -78,7 +84,7 @@ fn profile_override_warnings() {
 [WARNING] profile package spec `bar@1.2.3` in profile `dev` has a version or URL that does not match any of the packages: bar v0.5.0 ([ROOT]/foo/bar)
 [WARNING] profile package spec `bart` in profile `dev` did not match any packages
 
-	Did you mean `bar`?
+[HELP] a package with a similar name exists: `bar`
 [WARNING] profile package spec `no-suggestion` in profile `dev` did not match any packages
 [COMPILING] bar v0.5.0 ([ROOT]/foo/bar)
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
@@ -226,7 +232,7 @@ fn profile_override_hierarchy() {
 
     p.cargo("build -v")
         .with_stderr_data(str![[r#"
-[LOCKING] 4 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [COMPILING] m3 v0.5.0 ([ROOT]/foo/m3)
 [COMPILING] dep v0.5.0 ([ROOT]/dep)
 [RUNNING] `rustc --crate-name m3 --edition=2015 m3/src/lib.rs [..] --crate-type lib --emit=[..]link[..]-C codegen-units=4 [..]`
@@ -235,8 +241,8 @@ fn profile_override_hierarchy() {
 [RUNNING] `rustc --crate-name build_script_build --edition=2015 m1/build.rs [..] --crate-type bin --emit=[..]link[..]-C codegen-units=4 [..]`
 [COMPILING] m2 v0.0.1 ([ROOT]/foo/m2)
 [RUNNING] `rustc --crate-name build_script_build --edition=2015 m2/build.rs [..] --crate-type bin --emit=[..]link[..]-C codegen-units=2 [..]`
-[RUNNING] `[ROOT]/foo/target/debug/build/m1-[HASH]/build-script-build`
-[RUNNING] `[ROOT]/foo/target/debug/build/m2-[HASH]/build-script-build`
+[RUNNING] `[ROOT]/foo/target/debug/build/m1/[HASH]/out/build_script_build`
+[RUNNING] `[ROOT]/foo/target/debug/build/m2/[HASH]/out/build_script_build`
 [RUNNING] `rustc --crate-name m2 --edition=2015 m2/src/lib.rs [..] --crate-type lib --emit=[..]link[..]-C codegen-units=2 [..]`
 [COMPILING] m1 v0.0.1 ([ROOT]/foo/m1)
 [RUNNING] `rustc --crate-name m1 --edition=2015 m1/src/lib.rs [..] --crate-type lib --emit=[..]link[..]-C codegen-units=1 [..]`
@@ -420,7 +426,6 @@ fn profile_override_spec() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn override_proc_macro() {
     Package::new("shared", "1.0.0").publish();
@@ -514,7 +519,6 @@ fn no_warning_ws() {
 
     p.cargo("check -p b")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [CHECKING] b v0.1.0 ([ROOT]/foo/b)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 

@@ -1,8 +1,8 @@
 //! Tests for whether or not warnings are displayed for build scripts.
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::registry::Package;
-use cargo_test_support::{project, str, Project};
+use cargo_test_support::{Project, project, str};
 
 static WARNING1: &str = "Hello! I'm a warning. :)";
 static WARNING2: &str = "And one more!";
@@ -18,6 +18,9 @@ fn make_lib(lib_src: &str) {
                 version = "0.0.1"
                 edition = "2015"
                 build = "build.rs"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file(
@@ -52,6 +55,9 @@ fn make_upstream(main_src: &str) -> Project {
 
                 [dependencies]
                 bar = "*"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/main.rs", &format!("fn main() {{ {} }}", main_src))
@@ -66,7 +72,7 @@ fn no_warning_on_success() {
         .cargo("build")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v0.0.1 (registry `dummy-registry`)
 [COMPILING] bar v0.0.1
@@ -77,7 +83,6 @@ fn no_warning_on_success() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn no_warning_on_bin_failure() {
     make_lib("");
@@ -86,17 +91,21 @@ fn no_warning_on_bin_failure() {
         .cargo("build")
         .with_status(101)
         .with_stdout_does_not_contain("hidden stdout")
-        .with_stderr_does_not_contain("hidden stderr")
-        .with_stderr_does_not_contain(&format!("[WARNING] {}", WARNING1))
-        .with_stderr_does_not_contain(&format!("[WARNING] {}", WARNING2))
-        .with_stderr_contains("[UPDATING] `[..]` index")
-        .with_stderr_contains("[DOWNLOADED] bar v0.0.1 ([..])")
-        .with_stderr_contains("[COMPILING] bar v0.0.1")
-        .with_stderr_contains("[COMPILING] foo v0.0.1 ([..])")
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[LOCKING] 1 package to highest compatible version
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v0.0.1 (registry `dummy-registry`)
+[COMPILING] bar v0.0.1
+[COMPILING] foo v0.0.1 ([ROOT]/foo)
+error[E0425]: cannot find function `hi` in this scope
+...
+[ERROR] could not compile `foo` (bin "foo") due to 1 previous error
+
+"#]])
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn warning_on_lib_failure() {
     make_lib("err()");
@@ -105,12 +114,18 @@ fn warning_on_lib_failure() {
         .cargo("build")
         .with_status(101)
         .with_stdout_does_not_contain("hidden stdout")
-        .with_stderr_does_not_contain("hidden stderr")
-        .with_stderr_does_not_contain("[COMPILING] foo v0.0.1 ([..])")
-        .with_stderr_contains("[UPDATING] `[..]` index")
-        .with_stderr_contains("[DOWNLOADED] bar v0.0.1 ([..])")
-        .with_stderr_contains("[COMPILING] bar v0.0.1")
-        .with_stderr_contains(&format!("[WARNING] bar@0.0.1: {}", WARNING1))
-        .with_stderr_contains(&format!("[WARNING] bar@0.0.1: {}", WARNING2))
+        .with_stderr_data(str![[r#"
+[UPDATING] `dummy-registry` index
+[LOCKING] 1 package to highest compatible version
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v0.0.1 (registry `dummy-registry`)
+[COMPILING] bar v0.0.1
+error[E0425]: cannot find function `err` in this scope
+...
+[WARNING] bar@0.0.1: Hello! I'm a warning. :)
+[WARNING] bar@0.0.1: And one more!
+[ERROR] could not compile `bar` (lib) due to 1 previous error
+
+"#]])
         .run();
 }

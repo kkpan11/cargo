@@ -1,4 +1,4 @@
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::str;
 use cargo_test_support::{file, project};
 
@@ -25,10 +25,9 @@ im_a_teapot = "warn"
         .build();
 
     snapbox::cmd::Command::cargo_ui()
-        .masquerade_as_nightly_cargo(&["cargo-lints", "test-dummy-unstable"])
+        .masquerade_as_nightly_cargo(&["test-dummy-unstable"])
         .current_dir(p.root())
         .arg("check")
-        .arg("-Zcargo-lints")
         .assert()
         .success()
         .stdout_eq(str![""])

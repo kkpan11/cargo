@@ -1,9 +1,10 @@
 //! Tests for `cargo-features = ["different-binary-name"]`.
 
+use crate::prelude::*;
 use cargo_test_support::install::assert_has_installed_exe;
 use cargo_test_support::install::assert_has_not_installed_exe;
-use cargo_test_support::install::cargo_home;
-use cargo_test_support::prelude::*;
+use cargo_test_support::is_nightly;
+use cargo_test_support::paths;
 use cargo_test_support::project;
 use cargo_test_support::str;
 
@@ -90,7 +91,7 @@ fn binary_name1() {
     let deps_path = p.bin("007bar").with_extension("d");
     assert!(deps_path.is_file(), "{:?}", bar_path);
 
-    let depinfo = p.read_file(deps_path.to_str().unwrap());
+    let depinfo = p.read_file(&deps_path);
 
     // Prepare what content we expect to be present in deps file.
     let deps_exp = format!(
@@ -194,7 +195,7 @@ fn binary_name2() {
         .with_stderr_data(str![[r#"
 [COMPILING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] unittests src/main.rs (target/debug/deps/foo-[..][EXE])
+[RUNNING] unittests src/main.rs (target/debug/build/foo/[HASH]/out/foo-[..][EXE])
 
 "#]])
         .with_stdout_data(str![[r#"
@@ -221,7 +222,7 @@ Hello, crabs!
         .masquerade_as_nightly_cargo(&["different-binary-name"])
         .run();
 
-    assert_has_installed_exe(cargo_home(), "007bar");
+    assert_has_installed_exe(paths::cargo_home(), "007bar");
 
     p.cargo("uninstall")
         .with_stderr_data(str![[r#"
@@ -231,7 +232,7 @@ Hello, crabs!
         .masquerade_as_nightly_cargo(&["different-binary-name"])
         .run();
 
-    assert_has_not_installed_exe(cargo_home(), "007bar");
+    assert_has_not_installed_exe(paths::cargo_home(), "007bar");
 }
 
 #[cargo_test]
@@ -315,10 +316,212 @@ fn check_msg_format_json() {
     // Run cargo build.
     p.cargo("build --message-format=json")
         .masquerade_as_nightly_cargo(&["different-binary-name"])
-        .with_stdout_data(str![[r#"
-{"executable":"[ROOT]/foo/target/debug/007bar[EXE]","features":[],"filenames":"{...}","fresh":false,"manifest_path":"[ROOT]/foo/Cargo.toml","package_id":"path+[ROOTURL]/foo#0.0.1","profile":"{...}","reason":"compiler-artifact","target":"{...}"}
-{"reason":"build-finished","success":true}
-
-"#]].json_lines())
+        .with_stdout_data(
+            str![[r#"
+[
+  {
+    "executable": "[ROOT]/foo/target/debug/007bar[EXE]",
+    "features": [],
+    "filenames": "{...}",
+    "fresh": false,
+    "manifest_path": "[ROOT]/foo/Cargo.toml",
+    "package_id": "path+[ROOTURL]/foo#0.0.1",
+    "profile": "{...}",
+    "reason": "compiler-artifact",
+    "target": "{...}"
+  },
+  {
+    "reason": "build-finished",
+    "success": true
+  }
+]
+"#]]
+            .is_json()
+            .against_jsonlines(),
+        )
         .run();
+}
+
+#[cargo_test]
+fn targets_with_relative_path_in_workspace_members() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+            [workspace]
+            members = ["relative-bar"]
+            resolver = "2"
+        "#,
+        )
+        .file(
+            "relative-bar/Cargo.toml",
+            r#"
+                [package]
+                name = "relative-bar"
+                version = "0.1.0"
+                edition = "2021"
+
+                build = "./build.rs"
+
+                [[bin]]
+                name = "bar"
+                path = "./src/main.rs"
+
+                [lib]
+                name = "lib"
+                path = "./src/lib.rs"
+
+                [[example]]
+                name = "example"
+                path = "./example.rs"
+
+                [[test]]
+                name = "test"
+                path = "./test.rs"
+
+                [[bench]]
+                name = "bench"
+                path = "./bench.rs"
+            "#,
+        )
+        .file("relative-bar/build.rs", "fn main() { let a = 1; }")
+        .file("relative-bar/src/main.rs", "fn main() { let a = 1; }")
+        .file("relative-bar/src/lib.rs", "fn a() {}")
+        .file("relative-bar/example.rs", "fn main() { let a = 1; }")
+        .file(
+            "relative-bar/test.rs",
+            r#"
+                fn main() {}
+
+                #[test]
+                fn test_a() { let a = 1; } 
+            "#,
+        )
+        .file(
+            "relative-bar/bench.rs",
+            r#"  
+                #![feature(test)]
+                #[cfg(test)]
+                extern crate test;
+
+                #[bench]
+                fn bench_a(_b: &mut test::Bencher) { let a = 1; }
+            "#,
+        )
+        .build();
+
+    p.cargo("check")
+        .with_stderr_data(str![[r#"
+...
+ --> relative-bar/build.rs:1:17
+...
+ --> relative-bar/src/lib.rs:1:4
+...
+ --> relative-bar/src/main.rs:1:17
+...
+"#]])
+        .run();
+
+    p.cargo("check --example example")
+        .with_stderr_data(str![[r#"
+...
+ --> relative-bar/example.rs:1:17
+...
+"#]])
+        .run();
+
+    p.cargo("check --test test")
+        .with_stderr_data(str![[r#"
+...
+ --> relative-bar/test.rs:5:35
+...
+"#]])
+        .run();
+
+    if is_nightly() {
+        p.cargo("check --bench bench")
+            .with_stderr_data(str![[r#"
+...
+ --> relative-bar/bench.rs:7:58
+...
+"#]])
+            .run();
+    }
+
+    // Disable Cargo target auto-discovery.
+    p.change_file(
+        "relative-bar/Cargo.toml",
+        r#"
+            [package]
+            name = "relative-bar"
+            version = "0.1.0"
+            edition = "2021"
+
+            autolib = false
+            autobins = false
+            autoexamples = false
+            autotests = false
+            autobenches = false
+
+            build = "./build.rs"
+
+            [[bin]]
+            name = "bar"
+            path = "./src/main.rs"
+
+            [lib]
+            name = "lib"
+            path = "./src/lib.rs"
+
+            [[example]]
+            name = "example"
+            path = "./example.rs"
+
+            [[test]]
+            name = "test"
+            path = "./test.rs"
+
+            [[bench]]
+            name = "bench"
+            path = "./bench.rs"
+        "#,
+    );
+
+    p.cargo("check")
+        .with_stderr_data(str![[r#"
+...
+ --> relative-bar/build.rs:1:17
+...
+ --> relative-bar/src/lib.rs:1:4
+...
+ --> relative-bar/src/main.rs:1:17
+...
+"#]])
+        .run();
+
+    p.cargo("check --example example")
+        .with_stderr_data(str![[r#"
+...
+ --> relative-bar/example.rs:1:17
+...
+"#]])
+        .run();
+
+    p.cargo("check --test test")
+        .with_stderr_data(str![[r#"
+...
+ --> relative-bar/test.rs:5:35
+...
+"#]])
+        .run();
+
+    if is_nightly() {
+        p.cargo("check --bench bench")
+            .with_stderr_data(str![[r#"
+...
+ --> relative-bar/bench.rs:7:58
+...
+"#]])
+            .run();
+    }
 }

@@ -1,6 +1,6 @@
 //! Tests for --message-format flag.
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::{basic_lib_manifest, basic_manifest, project, str};
 
 #[cargo_test]
@@ -46,7 +46,6 @@ fn double_json_works() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn cargo_renders() {
     let p = project()
@@ -68,9 +67,21 @@ fn cargo_renders() {
 
     p.cargo("check --message-format json-render-diagnostics")
         .with_status(101)
-        .with_stdout(
-            "{\"reason\":\"compiler-artifact\",[..]\n\
-             {\"reason\":\"build-finished\",\"success\":false}",
+        .with_stdout_data(
+            str![[r#"
+[
+  {
+    "reason": "compiler-artifact",
+    "...": "{...}"
+  },
+  {
+    "reason": "build-finished",
+    "success": false
+  }
+]
+"#]]
+            .is_json()
+            .against_jsonlines(),
         )
         .with_stderr_contains(
             "\
@@ -101,7 +112,6 @@ error[E0601]: `main` function not found in crate `foo`
 }
 
 #[cargo_test]
-#[allow(deprecated)]
 fn cargo_renders_ansi() {
     let p = project()
         .file("Cargo.toml", &basic_manifest("foo", "0.1.0"))
@@ -110,7 +120,10 @@ fn cargo_renders_ansi() {
 
     p.cargo("check --message-format json-diagnostic-rendered-ansi")
         .with_status(101)
-        .with_stdout_contains("[..]\\u001b[38;5;9merror[..]")
+        // Because 1b is the start of an ANSI escape sequence, checking for it
+        // allows us to verify that ANSI colors are being emitted without
+        // looking for specific color codes, that may change over time.
+        .with_stdout_contains("[..]\\u001b[..]")
         .run();
 }
 
@@ -148,6 +161,43 @@ failures:
 
 test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in [ELAPSED]s
 
+
+"#]])
+        .run();
+}
+
+#[cargo_test(nightly, reason = "-Zrustc-unicode is unstable")]
+fn cargo_passes_unicode_output() {
+    let foo = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.0.1"
+                edition = "2015"
+            "#,
+        )
+        .file(
+            "src/lib.rs",
+            "\
+mod tests {
+    #[test]
+    fn t1() {
+        use std::io;
+    }
+}
+            ",
+        )
+        .build();
+
+    foo.cargo("check -v")
+        .arg("-Zrustc-unicode")
+        .masquerade_as_nightly_cargo(&["rustc-unicode"])
+        .with_stderr_data(str![[r#"
+[CHECKING] foo v0.0.1 ([ROOT]/foo)
+[RUNNING] `rustc [..] --json=diagnostic-rendered-ansi,artifacts,future-incompat,unused-externs-silent,diagnostic-unicode [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
         .run();

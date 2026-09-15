@@ -1,8 +1,8 @@
 //! Tests for the -Zrustdoc-map feature.
 
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
 use cargo_test_support::registry::{self, Package};
-use cargo_test_support::{paths, project, str, Project};
+use cargo_test_support::{Project, paths, project, str};
 
 fn basic_project() -> Project {
     Package::new("bar", "1.0.0")
@@ -33,7 +33,6 @@ fn basic_project() -> Project {
         .build()
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn ignores_on_stable() {
     // Requires -Zrustdoc-map to use.
@@ -47,7 +46,8 @@ fn ignores_on_stable() {
 fn simple() {
     // Basic test that it works with crates.io.
     let p = basic_project();
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_data(str![[r#"
 ...
@@ -61,7 +61,6 @@ fn simple() {
     assert!(myfun.contains(r#"href="https://docs.rs/bar/1.0.0/bar/struct.Straw.html""#));
 }
 
-#[allow(deprecated)]
 #[ignore = "Broken, temporarily disabled until https://github.com/rust-lang/rust/pull/82776 is resolved."]
 #[cargo_test]
 // #[cargo_test(nightly, reason = "--extern-html-root-url is unstable")]
@@ -89,7 +88,8 @@ fn std_docs() {
             std = "local"
         "#,
     );
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_contains("[RUNNING] `rustdoc [..]--crate-name foo [..]std=file://[..]")
         .run();
@@ -103,7 +103,8 @@ fn std_docs() {
             std = "https://example.com/rust/"
         "#,
     );
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_contains(
             "[RUNNING] `rustdoc [..]--crate-name foo [..]std=https://example.com/rust/[..]",
@@ -142,7 +143,8 @@ fn renamed_dep() {
             "#,
         )
         .build();
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_data(str![[r#"
 ...
@@ -195,7 +197,8 @@ fn lib_name() {
             "#,
         )
         .build();
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_data(str![[r#"
 ...
@@ -206,7 +209,9 @@ fn lib_name() {
 "#]])
         .run();
     let myfun = p.read_file("target/doc/foo/fn.myfun.html");
-    assert!(myfun.contains(r#"href="https://docs.rs/bar/1.0.0/rumpelstiltskin/struct.Straw.html""#));
+    assert!(
+        myfun.contains(r#"href="https://docs.rs/bar/1.0.0/rumpelstiltskin/struct.Straw.html""#)
+    );
 }
 
 #[cargo_test(nightly, reason = "--extern-html-root-url is unstable")]
@@ -264,7 +269,8 @@ fn alt_registry() {
             "#,
         )
         .build();
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_data(str![[r#"
 ...
@@ -317,7 +323,8 @@ fn multiple_versions() {
             ",
         )
         .build();
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_data(str![[r#"
 ...
@@ -339,7 +346,8 @@ fn multiple_versions() {
 fn rebuilds_when_changing() {
     // Make sure it rebuilds if the map changes.
     let p = basic_project();
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_data(str![[r#"
 ...
@@ -358,7 +366,8 @@ fn rebuilds_when_changing() {
             crates-io = "https://example.com/"
         "#,
     );
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_data(str![[r#"
 ...
@@ -431,7 +440,8 @@ fn alt_sparse_registry() {
             "#,
         )
         .build();
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_data(str![[r#"
 ...
@@ -451,7 +461,6 @@ fn alt_sparse_registry() {
     assert!(gold.contains(r#"href="https://docs.rs/grimm/1.0.0/grimm/struct.Gold.html""#));
 }
 
-#[allow(deprecated)]
 #[cargo_test(nightly, reason = "--extern-html-root-url is unstable")]
 fn same_deps_multi_occurrence_in_dep_tree() {
     // rust-lang/cargo#13543
@@ -485,7 +494,8 @@ fn same_deps_multi_occurrence_in_dep_tree() {
             "#,
         )
         .build();
-    p.cargo("doc -v --no-deps -Zrustdoc-map")
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_does_not_contain(
             "[..]--extern-html-root-url[..]bar=https://docs.rs\

@@ -1,9 +1,8 @@
-use std::process::Output;
-
-use cargo::core::compiler::Lto;
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
+use cargo::compiler::Lto;
+use cargo_test_support::RawOutput;
 use cargo_test_support::registry::Package;
-use cargo_test_support::{basic_manifest, project, str, Project};
+use cargo_test_support::{Project, basic_manifest, project, str};
 
 #[cargo_test]
 fn with_deps() {
@@ -30,7 +29,7 @@ fn with_deps() {
     p.cargo("build -v --release")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v0.0.1 (registry `dummy-registry`)
 [COMPILING] bar v0.0.1
@@ -73,7 +72,7 @@ fn shared_deps() {
         .with_stderr_data(
             str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v0.0.1 (registry `dummy-registry`)
 [COMPILING] bar v0.0.1
@@ -81,7 +80,7 @@ fn shared_deps() {
 [RUNNING] `rustc --crate-name bar [..]-C embed-bitcode=no [..]`
 [COMPILING] test v0.0.0 ([ROOT]/foo)
 [RUNNING] `rustc --crate-name build_script_build [..]`
-[RUNNING] `[ROOT]/foo/target/release/build/test-[HASH]/build-script-build`
+[RUNNING] `[ROOT]/foo/target/release/build/test/[HASH]/out/build_script_build`
 [RUNNING] `rustc --crate-name test [..]-C lto [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
 
@@ -117,14 +116,14 @@ fn build_dep_not_ltod() {
     p.cargo("build -v --release")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v0.0.1 (registry `dummy-registry`)
 [COMPILING] bar v0.0.1
 [RUNNING] `rustc --crate-name bar [..]-C embed-bitcode=no [..]`
 [COMPILING] test v0.0.0 ([ROOT]/foo)
 [RUNNING] `rustc --crate-name build_script_build [..]`
-[RUNNING] `[ROOT]/foo/target/release/build/test-[HASH]/build-script-build`
+[RUNNING] `[ROOT]/foo/target/release/build/test/[HASH]/out/build_script_build`
 [RUNNING] `rustc --crate-name test [..]-C lto [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
 
@@ -132,7 +131,6 @@ fn build_dep_not_ltod() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn complicated() {
     Package::new("dep-shared", "0.0.1")
@@ -299,7 +297,7 @@ fn off_in_manifest_works() {
     p.cargo("build -v --release")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v0.0.1 (registry `dummy-registry`)
 [COMPILING] bar v0.0.1
@@ -377,9 +375,9 @@ fn test_all() {
 [RUNNING] `rustc --crate-name foo [..]-C lto [..]--test [..]`
 [RUNNING] `rustc --crate-name foo [..]--crate-type bin [..]-C lto [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] `[ROOT]/foo/target/release/deps/foo-[HASH][EXE]`
-[RUNNING] `[ROOT]/foo/target/release/deps/a-[HASH][EXE]`
-[RUNNING] `[ROOT]/foo/target/release/deps/b-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/foo-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/a-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/b-[HASH][EXE]`
 
 "#]]
             .unordered(),
@@ -417,9 +415,9 @@ fn test_all_and_bench() {
 [RUNNING] `rustc --crate-name foo [..]-C lto [..]--test [..]`
 [RUNNING] `rustc --crate-name foo [..]--crate-type bin [..]-C lto [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] `[ROOT]/foo/target/release/deps/foo-[HASH][EXE]`
-[RUNNING] `[ROOT]/foo/target/release/deps/a-[HASH][EXE]`
-[RUNNING] `[ROOT]/foo/target/release/deps/b-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/foo-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/a-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/b-[HASH][EXE]`
 
 "#]]
             .unordered(),
@@ -510,7 +508,7 @@ fn project_with_dep(crate_types: &str) -> Project {
 ///
 /// `krate_info` is extra compiler flags used to distinguish this if the same
 /// crate name is being built multiple times.
-fn verify_lto(output: &Output, krate: &str, krate_info: &str, expected_lto: Lto) {
+fn verify_lto(output: &RawOutput, krate: &str, krate_info: &str, expected_lto: Lto) {
     let stderr = std::str::from_utf8(&output.stderr).unwrap();
     let mut matches = stderr.lines().filter(|line| {
         line.contains("Running")
@@ -555,7 +553,7 @@ fn verify_lto(output: &Output, krate: &str, krate_info: &str, expected_lto: Lto)
 #[cargo_test]
 fn cdylib_and_rlib() {
     let p = project_with_dep("'cdylib', 'rlib'");
-    let output = p.cargo("build --release -v").exec_with_output().unwrap();
+    let output = p.cargo("build --release -v").run();
     // `registry` is ObjectAndBitcode because it needs Object for the
     // rlib, and Bitcode for the cdylib (which doesn't support LTO).
     verify_lto(
@@ -589,8 +587,8 @@ fn cdylib_and_rlib() {
 [RUNNING] `rustc --crate-name foo [..]-C lto [..]--test [..]`
 [RUNNING] `rustc --crate-name a [..]-C lto [..]--test [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] `[ROOT]/foo/target/release/deps/foo-[HASH][EXE]`
-[RUNNING] `[ROOT]/foo/target/release/deps/a-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/foo-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/a-[HASH][EXE]`
 
 "#]]
             .unordered(),
@@ -616,10 +614,10 @@ fn cdylib_and_rlib() {
 [RUNNING] `rustc --crate-name bar [..]-C lto [..]--test [..]`
 [RUNNING] `rustc --crate-name b [..]-C lto [..]--test [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] `[ROOT]/foo/target/release/deps/bar-[HASH][EXE]`
-[RUNNING] `[ROOT]/foo/target/release/deps/b-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/bar/[HASH]/out/bar-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/bar/[HASH]/out/b-[HASH][EXE]`
 [DOCTEST] bar
-[RUNNING] `rustdoc --edition=2015 --crate-type cdylib --crate-type rlib --crate-name bar --test [..]-C lto [..]
+[RUNNING] `rustdoc --edition=2015 --crate-type cdylib --crate-type rlib --color auto --crate-name bar --test [..]-C lto [..]
 
 "#]].unordered())
         .run();
@@ -628,7 +626,7 @@ fn cdylib_and_rlib() {
 #[cargo_test]
 fn dylib() {
     let p = project_with_dep("'dylib'");
-    let output = p.cargo("build --release -v").exec_with_output().unwrap();
+    let output = p.cargo("build --release -v").run();
     // `registry` is OnlyObject because rustc doesn't support LTO with dylibs.
     verify_lto(&output, "registry", "--crate-type lib", Lto::OnlyObject);
     // `registry_shared` is both because it is needed by both bar (Object) and
@@ -656,8 +654,8 @@ fn dylib() {
 [RUNNING] `rustc --crate-name foo [..]-C lto [..]--test [..]`
 [RUNNING] `rustc --crate-name a [..]-C lto [..]--test [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] `[ROOT]/foo/target/release/deps/foo-[HASH][EXE]`
-[RUNNING] `[ROOT]/foo/target/release/deps/a-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/foo-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/a-[HASH][EXE]`
 
 "#]]
             .unordered(),
@@ -674,7 +672,6 @@ fn dylib() {
 [COMPILING] registry-shared v0.0.1
 [FRESH] registry v0.0.1
 [RUNNING] `rustc --crate-name registry_shared [..]-C embed-bitcode=no [..]`
-[DIRTY] bar v0.0.0 ([..]): dependency info changed
 [COMPILING] bar v0.0.0 ([ROOT]/foo/bar)
 [RUNNING] `rustc --crate-name bar [..]--crate-type dylib [..]-C embed-bitcode=no [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
@@ -694,14 +691,13 @@ fn dylib() {
 [FRESH] registry-shared v0.0.1
 [COMPILING] registry v0.0.1
 [RUNNING] `rustc --crate-name registry [..]`
-[DIRTY] bar v0.0.0 ([..]): dependency info changed
 [COMPILING] bar v0.0.0 ([ROOT]/foo/bar)
 [RUNNING] `rustc --crate-name bar [..]--crate-type dylib [..]-C embed-bitcode=no [..]`
 [RUNNING] `rustc --crate-name bar [..]-C lto [..]--test [..]`
 [RUNNING] `rustc --crate-name b [..]-C lto [..]--test [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] `[ROOT]/foo/target/release/deps/bar-[HASH][EXE]`
-[RUNNING] `[ROOT]/foo/target/release/deps/b-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/bar/[HASH]/out/bar-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/bar/[HASH]/out/b-[HASH][EXE]`
 
 "#]]
             .unordered(),
@@ -734,6 +730,9 @@ fn test_profile() {
 
                 [dependencies]
                 bar = "*"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file(
@@ -751,16 +750,16 @@ fn test_profile() {
         // unordered because the two `foo` builds start in parallel
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v0.0.1 (registry `dummy-registry`)
 [COMPILING] bar v0.0.1
 [RUNNING] `rustc --crate-name bar [..]--crate-type lib [..]`
 [COMPILING] foo v0.1.0 ([ROOT]/foo)
-[RUNNING] `rustc --crate-name foo [..]--crate-type lib --emit=dep-info,metadata,link -C linker-plugin-lto [..]`
+[RUNNING] `rustc --crate-name foo [..]--crate-type lib --emit=dep-info,metadata,link[..] -C linker-plugin-lto [..]`
 [RUNNING] `rustc --crate-name foo [..]--emit=dep-info,link -C lto=thin [..]--test [..]`
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[RUNNING] `[ROOT]/foo/target/debug/deps/foo-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/debug/build/foo/[HASH]/out/foo-[HASH][EXE]`
 [DOCTEST] foo
 [RUNNING] `rustdoc [..]
 
@@ -809,7 +808,7 @@ fn doctest() {
     p.cargo("test --doc --release -v")
         // embed-bitcode should be harmless here
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [COMPILING] bar v0.1.0 ([ROOT]/foo/bar)
 [RUNNING] `rustc --crate-name bar [..]--crate-type lib [..]-C linker-plugin-lto [..]`
 [COMPILING] foo v0.1.0 ([ROOT]/foo)
@@ -861,7 +860,7 @@ fn dylib_rlib_bin() {
         .file("src/bin/ferret.rs", "fn main() { foo::foo(); }")
         .build();
 
-    let output = p.cargo("build --release -v").exec_with_output().unwrap();
+    let output = p.cargo("build --release -v").run();
     verify_lto(
         &output,
         "foo",
@@ -892,6 +891,9 @@ fn fresh_swapping_commands() {
 
                 [profile.release]
                 lto = true
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "pub fn foo() { println!(\"hi!\"); }")
@@ -900,7 +902,7 @@ fn fresh_swapping_commands() {
     p.cargo("build --release -v")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
 [COMPILING] bar v1.0.0
@@ -918,7 +920,7 @@ fn fresh_swapping_commands() {
 [COMPILING] foo v0.1.0 ([ROOT]/foo)
 [RUNNING] `rustc --crate-name foo --edition=2015 src/lib.rs [..]-C lto [..]--test [..]`
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-[RUNNING] `[ROOT]/foo/target/release/deps/foo-[HASH][EXE]`
+[RUNNING] `[ROOT]/foo/target/release/build/foo/[HASH]/out/foo-[HASH][EXE]`
 [DOCTEST] foo
 [RUNNING] `rustdoc [..]-C lto [..]`
 
@@ -940,7 +942,7 @@ fn fresh_swapping_commands() {
 [FRESH] bar v1.0.0
 [FRESH] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `release` profile [optimized] target(s) in [ELAPSED]s
-[EXECUTABLE] `[ROOT]/foo/target/release/deps/foo-[HASH][EXE]`
+[EXECUTABLE] `[ROOT]/foo/target/release/build/foo/[HASH]/out/foo-[HASH][EXE]`
 
 "#]])
         .run();

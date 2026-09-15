@@ -2,14 +2,15 @@
 
 use std::fs::File;
 
-use cargo_test_support::cross_compile::{self, alternate};
-use cargo_test_support::install::cargo_home;
-use cargo_test_support::paths::CargoPathExt;
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
+use crate::utils::cargo_process;
+use crate::utils::cross_compile::disabled as cross_compile_disabled;
+use cargo_test_support::cross_compile::alternate;
+use cargo_test_support::paths;
 use cargo_test_support::publish::validate_crate_contents;
 use cargo_test_support::registry::{Dependency, Package};
 use cargo_test_support::str;
-use cargo_test_support::{basic_manifest, cargo_process, project, rustc_host, Project};
+use cargo_test_support::{Project, basic_manifest, project, rustc_host};
 
 /// Switches Cargo.toml to use `resolver = "2"`.
 pub fn switch_to_resolver_2(p: &Project) {
@@ -264,7 +265,7 @@ common
 #[cargo_test]
 fn itarget_proc_macro() {
     // itarget inside a proc-macro while cross-compiling
-    if cross_compile::disabled() {
+    if cross_compile_disabled() {
         return;
     }
     Package::new("hostdep", "1.0.0").publish();
@@ -909,7 +910,7 @@ fn required_features_host_dep() {
     p.cargo("run")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [ERROR] target `x` in package `foo` requires the features: `bdep/f1`
 Consider enabling them by passing, e.g., `--features="bdep/f1"`
 
@@ -1027,7 +1028,7 @@ fn required_features_inactive_dep() {
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
 "#]])
@@ -1121,18 +1122,15 @@ it is true
     // Make sure the test is fallible.
     p.cargo("test --doc")
         .with_status(101)
-        .with_stdout_data(str![[r#"
-...
-assertion `left == right` failed: common is wrong
-...
-"#]])
+        .with_stdout_data("...\n[..]common is wrong[..]\n...")
         .run();
     p.cargo("test --doc").env("TEST_EXPECTS_ENABLED", "1").run();
     p.cargo("doc").run();
-    assert!(p
-        .build_dir()
-        .join("doc/common/constant.FEAT_ONLY_CONST.html")
-        .exists());
+    assert!(
+        p.build_dir()
+            .join("doc/common/constant.FEAT_ONLY_CONST.html")
+            .exists()
+    );
     // cargo doc should clean in-between runs, but it doesn't, and leaves stale files.
     // https://github.com/rust-lang/cargo/issues/6783 (same for removed items)
     p.build_dir().join("doc").rm_rf();
@@ -1148,13 +1146,13 @@ it is false
 
     p.cargo("test --doc").run();
     p.cargo("doc").run();
-    assert!(!p
-        .build_dir()
-        .join("doc/common/constant.FEAT_ONLY_CONST.html")
-        .exists());
+    assert!(
+        !p.build_dir()
+            .join("doc/common/constant.FEAT_ONLY_CONST.html")
+            .exists()
+    );
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn proc_macro_ws() {
     // Checks for bug with proc-macro in a workspace with dependency (shouldn't panic).
@@ -1185,6 +1183,9 @@ fn proc_macro_ws() {
 
             [features]
             feat1 = []
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file("foo/src/lib.rs", "")
@@ -1201,6 +1202,9 @@ fn proc_macro_ws() {
 
             [dependencies]
             foo = { path = "../foo", features=["feat1"] }
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file("pm/src/lib.rs", "")
@@ -1285,7 +1289,7 @@ fn has_dev_dep_for_test() {
 
     p.cargo("check -v")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [RUNNING] `rustc --crate-name foo [..]`
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -1318,7 +1322,7 @@ fn has_dev_dep_for_test() {
 #[cargo_test]
 fn build_dep_activated() {
     // Build dependencies always match the host for [target.*.build-dependencies].
-    if cross_compile::disabled() {
+    if cross_compile_disabled() {
         return;
     }
     Package::new("somedep", "1.0.0")
@@ -1397,7 +1401,7 @@ fn resolver_bad_setting() {
 [ERROR] failed to parse manifest at `[ROOT]/foo/Cargo.toml`
 
 Caused by:
-  `resolver` setting `foo` is not valid, valid options are "1" or "2"
+  `resolver` setting `foo` is not valid, valid options are "1", "2" or "3"
 
 "#]])
         .run();
@@ -1555,9 +1559,10 @@ fn edition_2021_workspace_member() {
 
     p.cargo("check").with_stderr_data(str![[r#"
 [WARNING] virtual workspace defaulting to `resolver = "1"` despite one or more workspace members being on edition 2021 which implies `resolver = "2"`
-[NOTE] to keep the current resolver, specify `workspace.resolver = "1"` in the workspace root's manifest
-[NOTE] to use the edition 2021 resolver, specify `workspace.resolver = "2"` in the workspace root's manifest
-[NOTE] for more details see https://doc.rust-lang.org/cargo/reference/resolver.html#resolver-versions
+  |
+  = [NOTE] to keep the current resolver, specify `workspace.resolver = "1"` in the workspace root's manifest
+  = [NOTE] to use the edition 2021 resolver, specify `workspace.resolver = "2"` in the workspace root's manifest
+  = [NOTE] for more details see https://doc.rust-lang.org/cargo/reference/resolver.html#resolver-versions
 [CHECKING] a v0.1.0 ([ROOT]/foo/a)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 
@@ -1650,6 +1655,9 @@ fn resolver_enables_new_features() {
 
             [target.'cfg(whatever)'.dependencies]
             common = {version = "1.0", features=["itarget"]}
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file(
@@ -1680,6 +1688,9 @@ fn resolver_enables_new_features() {
 
             [features]
             ping = []
+
+            [lints.cargo]
+            default = "allow"
             "#,
         )
         .file(
@@ -1699,7 +1710,7 @@ fn resolver_enables_new_features() {
         .env("EXPECTED_FEATS", "1")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] common v1.0.0 (registry `dummy-registry`)
 [COMPILING] common v1.0.0
@@ -1793,14 +1804,25 @@ fn package_includes_resolve_behavior() {
 
     p.cargo("package").cwd("a").run();
 
-    let rewritten_toml = format!(
-        r#"{}
+    let rewritten_toml = str![[r##"
+# THIS FILE IS AUTOMATICALLY GENERATED BY CARGO
+#
+# When uploading crates to the registry Cargo will automatically
+# "normalize" Cargo.toml files for maximal compatibility
+# with all versions of Cargo and also rewrite `path` dependencies
+# to registry (e.g., crates.io) dependencies.
+#
+# If you are reading this file be aware that the original Cargo.toml
+# will likely look very different (and much more reasonable).
+# See Cargo.toml.orig for the original contents.
+
 [package]
 edition = "2015"
 name = "a"
 version = "0.1.0"
 authors = ["Zzz"]
 build = false
+autolib = false
 autobins = false
 autoexamples = false
 autotests = false
@@ -1814,16 +1836,15 @@ resolver = "2"
 [lib]
 name = "a"
 path = "src/lib.rs"
-"#,
-        cargo::core::manifest::MANIFEST_PREAMBLE
-    );
+
+"##]];
 
     let f = File::open(&p.root().join("target/package/a-0.1.0.crate")).unwrap();
     validate_crate_contents(
         f,
         "a-0.1.0.crate",
-        &["Cargo.toml", "Cargo.toml.orig", "src/lib.rs"],
-        &[("Cargo.toml", &rewritten_toml)],
+        &["Cargo.toml", "Cargo.toml.orig", "src/lib.rs", "Cargo.lock"],
+        [("Cargo.toml", rewritten_toml)],
     );
 }
 
@@ -1946,7 +1967,6 @@ fn shared_dep_same_but_dependencies() {
         // unordered because bin1 and bin2 build at the same time
         .with_stderr_data(
             str![[r#"
-[LOCKING] 4 packages to latest compatible versions
 [COMPILING] subdep v0.1.0 ([ROOT]/foo/subdep)
 [COMPILING] dep v0.1.0 ([ROOT]/foo/dep)
 [COMPILING] bin1 v0.1.0 ([ROOT]/foo/bin1)
@@ -2104,7 +2124,7 @@ fn doc_optional() {
         .with_stderr_data(
             str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 4 packages to latest compatible versions
+[LOCKING] 3 packages to highest compatible versions
 [DOWNLOADING] crates ...
 [DOWNLOADED] spin v1.0.0 (registry `dummy-registry`)
 [DOWNLOADED] bar v1.0.0 (registry `dummy-registry`)
@@ -2202,6 +2222,9 @@ fn minimal_download() {
                 [target.'cfg(whatever)'.build-dependencies]
                 itarget_build_dep = "1.0"
                 itarget_build_dep_pm = "1.0"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -2209,19 +2232,20 @@ fn minimal_download() {
         .build();
 
     let clear = || {
-        cargo_home().join("registry/cache").rm_rf();
-        cargo_home().join("registry/src").rm_rf();
+        paths::cargo_home().join("registry/cache").rm_rf();
+        paths::cargo_home().join("registry/src").rm_rf();
         p.build_dir().rm_rf();
     };
 
     // none
     // Should be the same as `-Zfeatures=all`
-    p.cargo("check -Zfeatures=compare")
+    p.cargo("check")
+        .arg("-Zfeatures=compare")
         .masquerade_as_nightly_cargo(&["features=compare"])
         .with_stderr_data(
             str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 15 packages to latest compatible versions
+[LOCKING] 14 packages to highest compatible versions
 [DOWNLOADING] crates ...
 [DOWNLOADED] normal_pm v1.0.0 (registry `dummy-registry`)
 [DOWNLOADED] normal v1.0.0 (registry `dummy-registry`)
@@ -2284,7 +2308,7 @@ fn minimal_download() {
 [COMPILING] dev_dep_pm v1.0.0
 [COMPILING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `test` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[EXECUTABLE] unittests src/lib.rs (target/debug/deps/foo-[HASH][EXE])
+[EXECUTABLE] unittests src/lib.rs (target/debug/build/foo/[HASH]/out/foo-[HASH][EXE])
 
 "#]]
             .unordered(),
@@ -2395,6 +2419,9 @@ fn pm_with_int_shared() {
                 [dependencies]
                 pm = { path = "../pm" }
                 shared = { path = "../shared", features = ["norm-feat"] }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file(
@@ -2417,6 +2444,9 @@ fn pm_with_int_shared() {
 
                 [dependencies]
                 shared = { path = "../shared", features = ["host-feat"] }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file(
@@ -2444,6 +2474,9 @@ fn pm_with_int_shared() {
                 [features]
                 norm-feat = []
                 host-feat = []
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file(
@@ -2467,7 +2500,6 @@ fn pm_with_int_shared() {
     p.cargo("build --workspace --all-targets --all-features -v")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 3 packages to latest compatible versions
 [COMPILING] shared v0.1.0 ([ROOT]/foo/shared)
 [RUNNING] `rustc --crate-name shared [..]--crate-type lib [..]`
 [RUNNING] `rustc --crate-name shared [..]--crate-type lib [..]`
@@ -2671,7 +2703,7 @@ fn all_features_merges_with_features() {
     p.cargo("run --example ex --all-features --features dep/feat1")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] dep v0.1.0 (registry `dummy-registry`)
 [COMPILING] dep v0.1.0
@@ -2715,6 +2747,9 @@ fn dep_with_optional_host_deps_activated() {
 
                 [dependencies]
                 serde = { path = "serde", features = ["derive", "build"] }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -2735,6 +2770,9 @@ fn dep_with_optional_host_deps_activated() {
                 [features]
                 derive = ["dep:serde_derive"]
                 build = ["dep:serde_build"]
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("serde/src/lib.rs", "")
@@ -2749,6 +2787,9 @@ fn dep_with_optional_host_deps_activated() {
 
                 [lib]
                 proc-macro = true
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("serde_derive/src/lib.rs", "")
@@ -2761,7 +2802,7 @@ fn dep_with_optional_host_deps_activated() {
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[LOCKING] 4 packages to latest compatible versions
+[LOCKING] 3 packages to highest compatible versions
 [COMPILING] serde_build v0.1.0 ([ROOT]/foo/serde_build)
 [COMPILING] serde_derive v0.1.0 ([ROOT]/foo/serde_derive)
 [COMPILING] serde v0.1.0 ([ROOT]/foo/serde)
@@ -2785,6 +2826,9 @@ fn dont_unify_proc_macro_example_from_dependency() {
 
                 [dependencies]
                 pm_helper = { path = "pm_helper" }
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("src/lib.rs", "")
@@ -2798,6 +2842,9 @@ fn dont_unify_proc_macro_example_from_dependency() {
                 name = "pm"
                 proc-macro = true
                 crate-type = ["proc-macro"]
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("pm_helper/src/lib.rs", "")
@@ -2806,7 +2853,7 @@ fn dont_unify_proc_macro_example_from_dependency() {
 
     p.cargo("check")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [CHECKING] pm_helper v0.0.0 ([ROOT]/foo/pm_helper)
 [CHECKING] foo v0.0.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s

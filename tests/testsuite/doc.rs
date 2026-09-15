@@ -3,13 +3,21 @@
 use std::fs;
 use std::str;
 
-use cargo::core::compiler::RustDocFingerprint;
-use cargo_test_support::paths::CargoPathExt;
-use cargo_test_support::prelude::*;
+use crate::prelude::*;
+use crate::utils::cross_compile::disabled as cross_compile_disabled;
+use crate::utils::tools;
+
+use cargo_test_support::compare::assert_e2e;
+use cargo_test_support::cross_compile;
 use cargo_test_support::registry::Package;
 use cargo_test_support::str;
 use cargo_test_support::{basic_lib_manifest, basic_manifest, git, project};
-use cargo_test_support::{rustc_host, symlink_supported, tools};
+use cargo_test_support::{rustc_host, symlink_supported};
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct RustdocFingerprint {
+    rustc_vv: String,
+}
 
 #[cargo_test]
 fn simple() {
@@ -111,7 +119,7 @@ fn doc_deps() {
     p.cargo("doc")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOCUMENTING] bar v0.0.1 ([ROOT]/foo/bar)
 [CHECKING] bar v0.0.1 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
@@ -129,7 +137,11 @@ fn doc_deps() {
 
     // Verify that it only emits rmeta for the dependency.
     assert_eq!(p.glob("target/debug/**/*.rlib").count(), 0);
-    assert_eq!(p.glob("target/debug/deps/libbar-*.rmeta").count(), 1);
+    assert_eq!(
+        p.glob("target/debug/build/bar/*/out/libbar-*.rmeta")
+            .count(),
+        1
+    );
 
     // Make sure it doesn't recompile.
     p.cargo("doc")
@@ -168,7 +180,7 @@ fn doc_no_deps() {
 
     p.cargo("doc --no-deps")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [CHECKING] bar v0.0.1 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -249,7 +261,6 @@ fn doc_multiple_targets_same_name_lib() {
     p.cargo("doc --workspace")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [ERROR] document output filename collision
 The lib `foo_lib` in package `foo v0.1.0 ([ROOT]/foo/foo)` has the same name as the lib `foo_lib` in package `bar v0.1.0 ([ROOT]/foo/bar)`.
 Only one may be documented at once since they output to the same path.
@@ -279,6 +290,9 @@ fn doc_multiple_targets_same_name() {
                 [[bin]]
                 name = "foo_lib"
                 path = "src/foo_lib.rs"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("foo/src/foo_lib.rs", "")
@@ -291,6 +305,9 @@ fn doc_multiple_targets_same_name() {
                 edition = "2015"
                 [lib]
                 name = "foo_lib"
+
+                [lints.cargo]
+                default = "allow"
             "#,
         )
         .file("bar/src/lib.rs", "")
@@ -298,13 +315,10 @@ fn doc_multiple_targets_same_name() {
 
     p.cargo("doc --workspace")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
-[WARNING] output filename collision.
-The bin target `foo_lib` in package `foo v0.1.0 ([ROOT]/foo/foo)` has the same output filename as the lib target `foo_lib` in package `bar v0.1.0 ([ROOT]/foo/bar)`.
-Colliding filename is: [ROOT]/foo/target/doc/foo_lib/index.html
-The targets should have unique names.
-This is a known bug where multiple crates with the same name use
-the same path; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] output filename collision at [ROOT]/foo/target/doc/foo_lib/index.html
+  |
+  = [NOTE] this is a known bug where multiple crates with the same name use the same path; see <https://github.com/rust-lang/cargo/issues/6313>
+  = [NOTE] the bin target `foo_lib` in package `foo v0.1.0 ([ROOT]/foo/foo)` has the same output filename as the lib target `foo_lib` in package `bar v0.1.0 ([ROOT]/foo/bar)`
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.1.0 ([ROOT]/foo/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -349,7 +363,6 @@ fn doc_multiple_targets_same_name_bin() {
     p.cargo("doc --workspace")
         .with_status(101)
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [ERROR] document output filename collision
 The bin `foo-cli` in package `foo v0.1.0 ([ROOT]/foo/foo)` has the same name as the bin `foo-cli` in package `bar v0.1.0 ([ROOT]/foo/bar)`.
 Only one may be documented at once since they output to the same path.
@@ -516,12 +529,10 @@ fn doc_lib_bin_same_name_documents_named_bin_when_requested() {
         // The checking/documenting lines are sometimes swapped since they run
         // concurrently.
         .with_stderr_data(str![[r#"
-[WARNING] output filename collision.
-The bin target `foo` in package `foo v0.0.1 ([ROOT]/foo)` has the same output filename as the lib target `foo` in package `foo v0.0.1 ([ROOT]/foo)`.
-Colliding filename is: [ROOT]/foo/target/doc/foo/index.html
-The targets should have unique names.
-This is a known bug where multiple crates with the same name use
-the same path; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] output filename collision at [ROOT]/foo/target/doc/foo/index.html
+  |
+  = [NOTE] the bin target `foo` in package `foo v0.0.1 ([ROOT]/foo)` has the same output filename as the lib target `foo` in package `foo v0.0.1 ([ROOT]/foo)`
+  = [NOTE] this is a known bug where multiple crates with the same name use the same path; see <https://github.com/rust-lang/cargo/issues/6313>
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
 [DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -560,12 +571,10 @@ fn doc_lib_bin_same_name_documents_bins_when_requested() {
         // The checking/documenting lines are sometimes swapped since they run
         // concurrently.
         .with_stderr_data(str![[r#"
-[WARNING] output filename collision.
-The bin target `foo` in package `foo v0.0.1 ([ROOT]/foo)` has the same output filename as the lib target `foo` in package `foo v0.0.1 ([ROOT]/foo)`.
-Colliding filename is: [ROOT]/foo/target/doc/foo/index.html
-The targets should have unique names.
-This is a known bug where multiple crates with the same name use
-the same path; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] output filename collision at [ROOT]/foo/target/doc/foo/index.html
+  |
+  = [NOTE] the bin target `foo` in package `foo v0.0.1 ([ROOT]/foo)` has the same output filename as the lib target `foo` in package `foo v0.0.1 ([ROOT]/foo)`
+  = [NOTE] this is a known bug where multiple crates with the same name use the same path; see <https://github.com/rust-lang/cargo/issues/6313>
 [CHECKING] foo v0.0.1 ([ROOT]/foo)
 [DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -730,7 +739,7 @@ fn doc_dash_p() {
     p.cargo("doc -p a")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 3 packages to latest compatible versions
+[LOCKING] 2 packages to highest compatible versions
 [DOCUMENTING] b v0.0.1 ([ROOT]/foo/b)
 [CHECKING] b v0.0.1 ([ROOT]/foo/b)
 [DOCUMENTING] a v0.0.1 ([ROOT]/foo/a)
@@ -761,7 +770,6 @@ fn doc_all_exclude() {
 
     p.cargo("doc --workspace --exclude baz")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/bar/index.html
@@ -788,7 +796,6 @@ fn doc_all_exclude_glob() {
 
     p.cargo("doc --workspace --exclude '*z'")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/bar/index.html
@@ -821,8 +828,14 @@ fn doc_target() {
                 #![feature(no_core, lang_items)]
                 #![no_core]
 
+                #[lang = "pointee_sized"]
+                trait PointeeSized {}
+
+                #[lang = "meta_sized"]
+                trait MetaSized: PointeeSized {}
+
                 #[lang = "sized"]
-                trait Sized {}
+                trait Sized: MetaSized {}
 
                 extern {
                     pub static A: u32;
@@ -833,10 +846,11 @@ fn doc_target() {
 
     p.cargo("doc --verbose --target").arg(TARGET).run();
     assert!(p.root().join(&format!("target/{}/doc", TARGET)).is_dir());
-    assert!(p
-        .root()
-        .join(&format!("target/{}/doc/foo/index.html", TARGET))
-        .is_file());
+    assert!(
+        p.root()
+            .join(&format!("target/{}/doc/foo/index.html", TARGET))
+            .is_file()
+    );
 }
 
 #[cargo_test]
@@ -1059,54 +1073,55 @@ fn features() {
             "#,
         )
         .file(
-            "bar/build.rs",
-            r#"
-                fn main() {
-                    println!("cargo::rustc-cfg=bar");
-                }
-            "#,
-        )
-        .file(
             "bar/src/lib.rs",
             r#"#[cfg(feature = "bar")] pub fn bar() {}"#,
         )
         .build();
     p.cargo("doc --features foo")
-        .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
-[COMPILING] bar v0.0.1 ([ROOT]/foo/bar)
+        .with_stderr_data(
+            str![[r#"
+[LOCKING] 1 package to highest compatible version
+[CHECKING] bar v0.0.1 ([ROOT]/foo/bar)
 [DOCUMENTING] bar v0.0.1 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
-"#]])
+"#]]
+            .unordered(),
+        )
         .run();
     assert!(p.root().join("target/doc").is_dir());
     assert!(p.root().join("target/doc/foo/fn.foo.html").is_file());
     assert!(p.root().join("target/doc/bar/fn.bar.html").is_file());
     // Check that turning the feature off will remove the files.
     p.cargo("doc")
-        .with_stderr_data(str![[r#"
-[COMPILING] bar v0.0.1 ([ROOT]/foo/bar)
+        .with_stderr_data(
+            str![[r#"
+[CHECKING] bar v0.0.1 ([ROOT]/foo/bar)
 [DOCUMENTING] bar v0.0.1 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
-"#]])
+"#]]
+            .unordered(),
+        )
         .run();
     assert!(!p.root().join("target/doc/foo/fn.foo.html").is_file());
     assert!(!p.root().join("target/doc/bar/fn.bar.html").is_file());
     // And switching back will rebuild and bring them back.
     p.cargo("doc --features foo")
-        .with_stderr_data(str![[r#"
+        .with_stderr_data(
+            str![[r#"
 [DOCUMENTING] bar v0.0.1 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/foo/index.html
 
-"#]])
+"#]]
+            .unordered(),
+        )
         .run();
     assert!(p.root().join("target/doc/foo/fn.foo.html").is_file());
     assert!(p.root().join("target/doc/bar/fn.bar.html").is_file());
@@ -1205,7 +1220,6 @@ fn doc_all_workspace() {
     p.cargo("doc --workspace")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.1.0 ([ROOT]/foo)
@@ -1244,7 +1258,6 @@ fn doc_all_workspace_verbose() {
     p.cargo("doc --workspace -v")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.1.0 ([ROOT]/foo)
 [RUNNING] `rustdoc [..]
@@ -1281,7 +1294,6 @@ fn doc_all_virtual_manifest() {
     p.cargo("doc --workspace")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [DOCUMENTING] baz v0.1.0 ([ROOT]/foo/baz)
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -1313,7 +1325,6 @@ fn doc_virtual_manifest_all_implied() {
     p.cargo("doc")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [GENERATED] [ROOT]/foo/target/doc/bar/index.html and 1 other file
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
@@ -1343,7 +1354,6 @@ fn doc_virtual_manifest_one_project() {
 
     p.cargo("doc -p bar")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/bar/index.html
@@ -1370,7 +1380,6 @@ fn doc_virtual_manifest_glob() {
 
     p.cargo("doc -p '*z'")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [DOCUMENTING] baz v0.1.0 ([ROOT]/foo/baz)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
 [GENERATED] [ROOT]/foo/target/doc/baz/index.html
@@ -1409,15 +1418,13 @@ fn doc_all_member_dependency_same_name() {
     p.cargo("doc --workspace")
         .with_stderr_data(str![[r#"
 [UPDATING] `dummy-registry` index
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOWNLOADING] crates ...
 [DOWNLOADED] bar v0.1.0 (registry `dummy-registry`)
-[WARNING] output filename collision.
-The lib target `bar` in package `bar v0.1.0` has the same output filename as the lib target `bar` in package `bar v0.1.0 ([ROOT]/foo/bar)`.
-Colliding filename is: [ROOT]/foo/target/doc/bar/index.html
-The targets should have unique names.
-This is a known bug where multiple crates with the same name use
-the same path; see <https://github.com/rust-lang/cargo/issues/6313>.
+[WARNING] output filename collision at [ROOT]/foo/target/doc/bar/index.html
+  |
+  = [NOTE] the lib target `bar` in package `bar v0.1.0` has the same output filename as the lib target `bar` in package `bar v0.1.0 ([ROOT]/foo/bar)`
+  = [NOTE] this is a known bug where multiple crates with the same name use the same path; see <https://github.com/rust-lang/cargo/issues/6313>
 [DOCUMENTING] bar v0.1.0
 [CHECKING] bar v0.1.0
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
@@ -1449,7 +1456,6 @@ fn doc_workspace_open_help_message() {
         .env("BROWSER", tools::echo())
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [DOCUMENTING] foo v0.1.0 ([ROOT]/foo/foo)
 [DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -1477,8 +1483,9 @@ fn doc_extern_map_local() {
         .file(".cargo/config.toml", "doc.extern-map.std = 'local'")
         .build();
 
-    p.cargo("doc -v --no-deps -Zrustdoc-map --open")
+    p.cargo("doc -v --no-deps --open")
         .env("BROWSER", tools::echo())
+        .arg("-Zrustdoc-map")
         .masquerade_as_nightly_cargo(&["rustdoc-map"])
         .with_stderr_data(str![[r#"
 [DOCUMENTING] foo v0.1.0 ([ROOT]/foo)
@@ -1514,7 +1521,7 @@ fn open_no_doc_crate() {
         .with_status(101)
         .with_stderr_data(str![[r#"
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
-[ERROR] no crates with documentation
+[ERROR] cannot open specified crate's documentation: no documentation generated
 
 "#]])
         .run();
@@ -1765,10 +1772,11 @@ fn doc_private_items() {
     foo.cargo("doc --document-private-items").run();
 
     assert!(foo.root().join("target/doc").is_dir());
-    assert!(foo
-        .root()
-        .join("target/doc/foo/private/index.html")
-        .is_file());
+    assert!(
+        foo.root()
+            .join("target/doc/foo/private/index.html")
+            .is_file()
+    );
 }
 
 #[cargo_test]
@@ -1790,7 +1798,6 @@ fn doc_private_ws() {
     p.cargo("doc --workspace --bins --lib --document-private-items -v")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
 [DOCUMENTING] b v0.0.1 ([ROOT]/foo/b)
 [CHECKING] b v0.0.1 ([ROOT]/foo/b)
 [DOCUMENTING] a v0.0.1 ([ROOT]/foo/a)
@@ -1849,7 +1856,7 @@ fn doc_cap_lints() {
     p.cargo("doc")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [UPDATING] git repository `[..]`
 [DOCUMENTING] a v0.5.0 ([..])
 [CHECKING] a v0.5.0 ([..])
@@ -1873,36 +1880,35 @@ fn doc_cap_lints() {
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn doc_message_format() {
     let p = project().file("src/lib.rs", BAD_INTRA_LINK_LIB).build();
 
     p.cargo("doc --message-format=json")
         .with_status(101)
-        .with_json_contains_unordered(
-            r#"
-            {
-                "message": {
-                    "$message_type": "diagnostic",
-                    "children": "{...}",
-                    "code": "{...}",
-                    "level": "error",
-                    "message": "{...}",
-                    "rendered": "{...}",
-                    "spans": "{...}"
-                },
-                "package_id": "path+file:///[..]/foo#0.0.1",
-                "manifest_path": "[..]",
-                "reason": "compiler-message",
-                "target": "{...}"
-            }
-            "#,
+        .with_stdout_data(
+            str![[r##"
+[
+  {
+    "manifest_path": "[ROOT]/foo/Cargo.toml",
+    "message": {
+      "$message_type": "diagnostic",
+      "level": "error",
+      "...": "{...}"
+    },
+    "package_id": "path+[ROOTURL]/foo#0.0.1",
+    "reason": "compiler-message",
+    "target": "{...}"
+  },
+  "{...}"
+]
+"##]]
+            .is_json()
+            .against_jsonlines(),
         )
         .run();
 }
 
-#[allow(deprecated)]
 #[cargo_test]
 fn doc_json_artifacts() {
     // Checks the output of json artifact messages.
@@ -1912,76 +1918,96 @@ fn doc_json_artifacts() {
         .build();
 
     p.cargo("doc --message-format=json")
-        .with_json_contains_unordered(
-            r#"
-{
-    "reason": "compiler-artifact",
-    "package_id": "path+file:///[..]/foo#0.0.1",
-    "manifest_path": "[ROOT]/foo/Cargo.toml",
-    "target":
-    {
-        "kind": ["lib"],
-        "crate_types": ["lib"],
-        "name": "foo",
-        "src_path": "[ROOT]/foo/src/lib.rs",
-        "edition": "2015",
-        "doc": true,
-        "doctest": true,
-        "test": true
-    },
-    "profile": "{...}",
-    "features": [],
-    "filenames": ["[ROOT]/foo/target/debug/deps/libfoo-[..].rmeta"],
+        .with_stdout_data(
+            str![[r#"
+[
+  {
     "executable": null,
-    "fresh": false
-}
-
-{
-    "reason": "compiler-artifact",
-    "package_id": "path+file:///[..]/foo#0.0.1",
-    "manifest_path": "[ROOT]/foo/Cargo.toml",
-    "target":
-    {
-        "kind": ["lib"],
-        "crate_types": ["lib"],
-        "name": "foo",
-        "src_path": "[ROOT]/foo/src/lib.rs",
-        "edition": "2015",
-        "doc": true,
-        "doctest": true,
-        "test": true
-    },
-    "profile": "{...}",
     "features": [],
-    "filenames": ["[ROOT]/foo/target/doc/foo/index.html"],
-    "executable": null,
-    "fresh": false
-}
-
-{
-    "reason": "compiler-artifact",
-    "package_id": "path+file:///[..]/foo#0.0.1",
+    "filenames": [
+      "[ROOT]/foo/target/debug/build/foo/[HASH]/out/libfoo-[HASH].rmeta"
+    ],
+    "fresh": false,
     "manifest_path": "[ROOT]/foo/Cargo.toml",
-    "target":
-    {
-        "kind": ["bin"],
-        "crate_types": ["bin"],
-        "name": "somebin",
-        "src_path": "[ROOT]/foo/src/bin/somebin.rs",
-        "edition": "2015",
-        "doc": true,
-        "doctest": false,
-        "test": true
-    },
+    "package_id": "path+[ROOTURL]/foo#0.0.1",
     "profile": "{...}",
-    "features": [],
-    "filenames": ["[ROOT]/foo/target/doc/somebin/index.html"],
+    "reason": "compiler-artifact",
+    "target": {
+      "crate_types": [
+        "lib"
+      ],
+      "doc": true,
+      "doctest": true,
+      "edition": "2015",
+      "kind": [
+        "lib"
+      ],
+      "name": "foo",
+      "src_path": "[ROOT]/foo/src/lib.rs",
+      "test": true
+    }
+  },
+  {
     "executable": null,
-    "fresh": false
-}
-
-{"reason":"build-finished","success":true}
-"#,
+    "features": [],
+    "filenames": [
+      "[ROOT]/foo/target/doc/foo/index.html"
+    ],
+    "fresh": false,
+    "manifest_path": "[ROOT]/foo/Cargo.toml",
+    "package_id": "path+[ROOTURL]/foo#0.0.1",
+    "profile": "{...}",
+    "reason": "compiler-artifact",
+    "target": {
+      "crate_types": [
+        "lib"
+      ],
+      "doc": true,
+      "doctest": true,
+      "edition": "2015",
+      "kind": [
+        "lib"
+      ],
+      "name": "foo",
+      "src_path": "[ROOT]/foo/src/lib.rs",
+      "test": true
+    }
+  },
+  {
+    "executable": null,
+    "features": [],
+    "filenames": [
+      "[ROOT]/foo/target/doc/somebin/index.html"
+    ],
+    "fresh": false,
+    "manifest_path": "[ROOT]/foo/Cargo.toml",
+    "package_id": "path+[ROOTURL]/foo#0.0.1",
+    "profile": "{...}",
+    "reason": "compiler-artifact",
+    "target": {
+      "crate_types": [
+        "bin"
+      ],
+      "doc": true,
+      "doctest": false,
+      "edition": "2015",
+      "kind": [
+        "bin"
+      ],
+      "name": "somebin",
+      "src_path": "[ROOT]/foo/src/bin/somebin.rs",
+      "test": true
+    }
+  },
+  {
+    "reason": "build-finished",
+    "success": true
+  }
+]
+"#]]
+            .is_json()
+            .against_jsonlines()
+            .unordered(),
         )
         .run();
 }
@@ -2029,12 +2055,13 @@ fn doc_example() {
         .build();
 
     p.cargo("doc").run();
-    assert!(p
-        .build_dir()
-        .join("doc")
-        .join("ex1")
-        .join("fn.x.html")
-        .exists());
+    assert!(
+        p.build_dir()
+            .join("doc")
+            .join("ex1")
+            .join("fn.x.html")
+            .exists()
+    );
 }
 
 #[cargo_test]
@@ -2095,12 +2122,13 @@ fn doc_example_with_deps() {
         .build();
 
     p.cargo("doc --examples").run();
-    assert!(p
-        .build_dir()
-        .join("doc")
-        .join("ex")
-        .join("fn.x.html")
-        .exists());
+    assert!(
+        p.build_dir()
+            .join("doc")
+            .join("ex")
+            .join("fn.x.html")
+            .exists()
+    );
 }
 
 #[cargo_test]
@@ -2143,15 +2171,17 @@ fn bin_private_items() {
     assert!(p.root().join("target/doc/foo/index.html").is_file());
     assert!(p.root().join("target/doc/foo/fn.foo_pub.html").is_file());
     assert!(p.root().join("target/doc/foo/fn.foo_priv.html").is_file());
-    assert!(p
-        .root()
-        .join("target/doc/foo/struct.FooStruct.html")
-        .is_file());
+    assert!(
+        p.root()
+            .join("target/doc/foo/struct.FooStruct.html")
+            .is_file()
+    );
     assert!(p.root().join("target/doc/foo/enum.FooEnum.html").is_file());
-    assert!(p
-        .root()
-        .join("target/doc/foo/trait.FooTrait.html")
-        .is_file());
+    assert!(
+        p.root()
+            .join("target/doc/foo/trait.FooTrait.html")
+            .is_file()
+    );
     assert!(p.root().join("target/doc/foo/type.FooType.html").is_file());
     assert!(p.root().join("target/doc/foo/foo_mod/index.html").is_file());
 }
@@ -2193,7 +2223,7 @@ fn bin_private_items_deps() {
     p.cargo("doc")
         .with_stderr_data(
             str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [DOCUMENTING] bar v0.0.1 ([ROOT]/foo/bar)
 [CHECKING] bar v0.0.1 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
@@ -2485,7 +2515,7 @@ LLVM version: 9.0
 
     dummy_project.cargo("doc").run();
 
-    let fingerprint: RustDocFingerprint =
+    let fingerprint: RustdocFingerprint =
         serde_json::from_str(&dummy_project.read_file("target/.rustdoc_fingerprint.json"))
             .expect("JSON Serde fail");
 
@@ -2524,7 +2554,7 @@ LLVM version: 9.0
 
     assert!(!dummy_project.build_dir().join("doc/bogus_file").exists());
 
-    let fingerprint: RustDocFingerprint =
+    let fingerprint: RustdocFingerprint =
         serde_json::from_str(&dummy_project.read_file("target/.rustdoc_fingerprint.json"))
             .expect("JSON Serde fail");
 
@@ -2538,6 +2568,7 @@ LLVM version: 9.0
 
 #[cargo_test]
 fn doc_fingerprint_respects_target_paths() {
+    let host = rustc_host();
     // Random rustc verbose version
     let old_rustc_verbose_version = format!(
         "\
@@ -2545,86 +2576,83 @@ rustc 1.41.1 (f3e1a954d 2020-02-24)
 binary: rustc
 commit-hash: f3e1a954d2ead4e2fc197c7da7d71e6c61bad196
 commit-date: 2020-02-24
-host: {}
+host: {host}
 release: 1.41.1
 LLVM version: 9.0
 ",
-        rustc_host()
     );
 
-    // Create the dummy project.
-    let dummy_project = project()
+    let p = project()
         .file(
             "Cargo.toml",
             r#"
             [package]
             name = "foo"
-            version = "1.2.4"
-            edition = "2015"
-            authors = []
+            edition = "2021"
         "#,
         )
         .file("src/lib.rs", "//! These are the docs!")
         .build();
 
-    dummy_project.cargo("doc --target").arg(rustc_host()).run();
+    // generate `target/doc` and `target/<host>/doc
+    p.cargo("doc --target").arg(host).run();
+    p.cargo("doc").run();
 
-    let fingerprint: RustDocFingerprint =
-        serde_json::from_str(&dummy_project.read_file("target/.rustdoc_fingerprint.json"))
+    let host_fingerprint_path = p.build_dir().join(".rustdoc_fingerprint.json");
+
+    let target_fingerprint_path = p.build_dir().join(host).join(".rustdoc_fingerprint.json");
+
+    let host_fingerprint: RustdocFingerprint =
+        serde_json::from_str(&fs::read_to_string(&host_fingerprint_path).unwrap())
             .expect("JSON Serde fail");
+
+    let target_fingerprint: RustdocFingerprint =
+        serde_json::from_str(&fs::read_to_string(&target_fingerprint_path).unwrap())
+            .expect("JSON Serde fail");
+
+    assert_eq!(host_fingerprint.rustc_vv, target_fingerprint.rustc_vv);
 
     // Check that the fingerprint contains the actual rustc version
     // which has been used to compile the docs.
-    let output = std::process::Command::new("rustc")
-        .arg("-vV")
-        .output()
-        .expect("Failed to get actual rustc verbose version");
-    assert_eq!(
-        fingerprint.rustc_vv,
-        (String::from_utf8_lossy(&output.stdout).as_ref())
-    );
+    let current_rustc_version = String::from_utf8(
+        std::process::Command::new("rustc")
+            .arg("-vV")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap();
+    assert_eq!(&host_fingerprint.rustc_vv, &current_rustc_version);
 
-    // As the test shows above. Now we have generated the `doc/` folder and inside
-    // the rustdoc fingerprint file is located with the correct rustc version.
-    // So we will remove it and create a new fingerprint with an old rustc version
-    // inside it. We will also place a bogus file inside of the `doc/` folder to ensure
-    // it gets removed as we expect on the next doc compilation.
-    dummy_project.change_file(
-        "target/.rustdoc_fingerprint.json",
+    // Write random `rustc -vV` output and bogus file for both host and target
+    fs::write(&host_fingerprint_path, &old_rustc_verbose_version).unwrap();
+    fs::write(&target_fingerprint_path, &old_rustc_verbose_version).unwrap();
+    fs::write(
+        p.build_dir().join(host).join("doc/bogus_file"),
+        "This is a bogus file and should be removed!",
+    )
+    .unwrap();
+    fs::write(
+        p.build_dir().join("doc/bogus_file"),
+        "This is a bogus file and should be removed!",
+    )
+    .unwrap();
+
+    // ...but run only target
+    p.cargo("doc --target").arg(host).run();
+
+    // host doc dir stays the same, and the fingerprint is still the old random one
+    assert!(p.build_dir().join("doc/bogus_file").exists());
+    assert_eq!(
+        &fs::read_to_string(&host_fingerprint_path).unwrap(),
         &old_rustc_verbose_version,
     );
 
-    fs::write(
-        dummy_project
-            .build_dir()
-            .join(rustc_host())
-            .join("doc/bogus_file"),
-        String::from("This is a bogus file and should be removed!"),
-    )
-    .expect("Error writing test bogus file");
-
-    // Now if we trigger another compilation, since the fingerprint contains an old version
-    // of rustc, cargo should remove the entire `/doc` folder (including the fingerprint)
-    // and generating another one with the actual version.
-    // It should also remove the bogus file we created above.
-    dummy_project.cargo("doc --target").arg(rustc_host()).run();
-
-    assert!(!dummy_project
-        .build_dir()
-        .join(rustc_host())
-        .join("doc/bogus_file")
-        .exists());
-
-    let fingerprint: RustDocFingerprint =
-        serde_json::from_str(&dummy_project.read_file("target/.rustdoc_fingerprint.json"))
-            .expect("JSON Serde fail");
-
-    // Check that the fingerprint contains the actual rustc version
-    // which has been used to compile the docs.
-    assert_eq!(
-        fingerprint.rustc_vv,
-        (String::from_utf8_lossy(&output.stdout).as_ref())
-    );
+    // target doc dir got cleaned
+    assert!(!p.build_dir().join(host).join("doc/bogus_file").exists());
+    let fingerprint: RustdocFingerprint =
+        serde_json::from_str(&fs::read_to_string(&target_fingerprint_path).unwrap()).unwrap();
+    assert_eq!(&fingerprint.rustc_vv, &current_rustc_version);
 }
 
 #[cargo_test]
@@ -2675,7 +2703,8 @@ fn doc_fingerprint_unusual_behavior() {
     // Change file to trigger a new build.
     p.change_file("src/lib.rs", "// changed2");
     fs::write(real_doc.join("somefile"), "test").unwrap();
-    p.cargo("doc -Z skip-rustdoc-fingerprint")
+    p.cargo("doc")
+        .arg("-Zskip-rustdoc-fingerprint")
         .masquerade_as_nightly_cargo(&["skip-rustdoc-fingerprint"])
         .with_stderr_data(str![[r#"
 [DOCUMENTING] foo v0.0.1 ([ROOT]/foo)
@@ -2771,7 +2800,7 @@ fn doc_lib_false() {
 
     p.cargo("doc")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
 [CHECKING] foo v0.1.0 ([ROOT]/foo)
 [DOCUMENTING] foo v0.1.0 ([ROOT]/foo)
@@ -2821,7 +2850,7 @@ fn doc_lib_false_dep() {
 
     p.cargo("doc")
         .with_stderr_data(str![[r#"
-[LOCKING] 2 packages to latest compatible versions
+[LOCKING] 1 package to highest compatible version
 [CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
 [DOCUMENTING] foo v0.1.0 ([ROOT]/foo)
 [FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
@@ -2891,4 +2920,1422 @@ Caused by:
 "#]])
         .with_status(101)
         .run();
+}
+
+#[cargo_test(nightly, reason = "`rustdoc --emit` is unstable")]
+fn rustdoc_depinfo_gated() {
+    let p = project()
+        .file("Cargo.toml", &basic_lib_manifest("foo"))
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("doc")
+        .arg("-Zrustdoc-depinfo")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] the `-Z` flag is only accepted on the nightly channel of Cargo, but this is the `stable` channel
+See https://doc.rust-lang.org/book/appendix-07-nightly-rust.html for more information about Rust release channels.
+
+"#]])
+        .run();
+}
+
+#[cargo_test(nightly, reason = "`rustdoc --emit` is unstable")]
+fn rebuild_tracks_target_src_outside_package_root() {
+    let p = cargo_test_support::project_in("parent")
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2015"
+                [lib]
+                path = "../lib.rs"
+            "#,
+        )
+        .file("../lib.rs", "//! # depinfo-before")
+        .build();
+
+    p.cargo("doc")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[DOCUMENTING] foo v0.0.0 ([ROOT]/parent/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-before"));
+
+    p.change_file("../lib.rs", "//! # depinfo-after");
+
+    p.cargo("doc --verbose")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[DIRTY] foo v0.0.0 ([ROOT]/parent/foo): the file `../lib.rs` has changed ([TIME_DIFF_AFTER_LAST_BUILD])
+[DOCUMENTING] foo v0.0.0 ([ROOT]/parent/foo)
+[RUNNING] `rustdoc [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-after"));
+}
+
+#[cargo_test(nightly, reason = "`rustdoc --emit` is unstable")]
+fn rebuild_tracks_include_str() {
+    let p = cargo_test_support::project_in("parent")
+        .file("Cargo.toml", &basic_lib_manifest("foo"))
+        .file("src/lib.rs", r#"#![doc = include_str!("../../README")]"#)
+        .file("../README", "# depinfo-before")
+        .build();
+
+    p.cargo("doc")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[DOCUMENTING] foo v0.5.0 ([ROOT]/parent/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-before"));
+
+    p.change_file("../README", "# depinfo-after");
+
+    p.cargo("doc --verbose")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[DIRTY] foo v0.5.0 ([ROOT]/parent/foo): the file `src/../../README` has changed ([TIME_DIFF_AFTER_LAST_BUILD])
+[DOCUMENTING] foo v0.5.0 ([ROOT]/parent/foo)
+[RUNNING] `rustdoc [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-after"));
+}
+
+#[cargo_test(nightly, reason = "`rustdoc --emit` is unstable")]
+fn rebuild_tracks_path_attr() {
+    let p = cargo_test_support::project_in("parent")
+        .file("Cargo.toml", &basic_lib_manifest("foo"))
+        .file("src/lib.rs", r#"#[path = "../../bar.rs"] pub mod bar;"#)
+        .file("../bar.rs", "//! # depinfo-before")
+        .build();
+
+    p.cargo("doc")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[DOCUMENTING] foo v0.5.0 ([ROOT]/parent/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-before"));
+
+    p.change_file("../bar.rs", "//! # depinfo-after");
+
+    p.cargo("doc --verbose")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[DIRTY] foo v0.5.0 ([ROOT]/parent/foo): the file `src/../../bar.rs` has changed ([TIME_DIFF_AFTER_LAST_BUILD])
+[DOCUMENTING] foo v0.5.0 ([ROOT]/parent/foo)
+[RUNNING] `rustdoc [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-after"));
+}
+
+#[cargo_test(nightly, reason = "`rustdoc --emit` is unstable")]
+fn rebuild_tracks_env() {
+    let env = "__RUSTDOC_INJECTED";
+    let p = project()
+        .file("Cargo.toml", &basic_lib_manifest("foo"))
+        .file("src/lib.rs", &format!(r#"#![doc = env!("{env}")]"#))
+        .build();
+
+    p.cargo("doc")
+        .env(env, "# depinfo-before")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[DOCUMENTING] foo v0.5.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-before"));
+
+    p.cargo("doc --verbose")
+        .env(env, "# depinfo-after")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[DIRTY] foo v0.5.0 ([ROOT]/foo): the environment variable __RUSTDOC_INJECTED changed
+[DOCUMENTING] foo v0.5.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-after"));
+}
+
+#[cargo_test(nightly, reason = "`rustdoc --emit` is unstable")]
+fn rebuild_tracks_env_in_dep() {
+    let env = "__RUSTDOC_INJECTED";
+    Package::new("bar", "0.1.0")
+        .file("src/lib.rs", &format!(r#"#![doc = env!("{env}")]"#))
+        .publish();
+
+    let env = "__RUSTDOC_INJECTED";
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2015"
+                [dependencies]
+                bar = "0.1.0"
+            "#,
+        )
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("doc")
+        .env(env, "# depinfo-before")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(
+            str![[r#"
+[UPDATING] `dummy-registry` index
+[LOCKING] 1 package to highest compatible version
+[DOWNLOADING] crates ...
+[DOWNLOADED] bar v0.1.0 (registry `dummy-registry`)
+[CHECKING] bar v0.1.0
+[DOCUMENTING] bar v0.1.0
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]]
+            .unordered(),
+        )
+        .run();
+
+    let doc_html = p.read_file("target/doc/bar/index.html");
+    assert!(doc_html.contains("depinfo-before"));
+
+    p.cargo("doc --verbose")
+        .env(env, "# depinfo-after")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(
+            str![[r#"
+[DIRTY] bar v0.1.0: the environment variable __RUSTDOC_INJECTED changed
+[DOCUMENTING] bar v0.1.0
+[DIRTY] bar v0.1.0: the environment variable __RUSTDOC_INJECTED changed
+[CHECKING] bar v0.1.0
+[RUNNING] `rustc --crate-name bar [..]`
+[RUNNING] `rustdoc [..]--crate-name bar [..]`
+[DIRTY] foo v0.0.0 ([ROOT]/foo): the dependency `bar` was rebuilt
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]]
+            .unordered(),
+        )
+        .run();
+
+    let doc_html = p.read_file("target/doc/bar/index.html");
+    assert!(doc_html.contains("depinfo-after"));
+}
+
+#[cargo_test(
+    nightly,
+    reason = "`rustdoc --emit` is unstable; requires -Zchecksum-hash-algorithm"
+)]
+fn rebuild_tracks_checksum() {
+    let p = cargo_test_support::project_in("parent")
+        .file("Cargo.toml", &basic_lib_manifest("foo"))
+        .file("src/lib.rs", r#"#![doc = include_str!("../../README")]"#)
+        .file("../README", "# depinfo-before")
+        .build();
+
+    p.cargo("doc")
+        .env("CARGO_BUILD_FINGERPRINT", "content")
+        .arg("-Zrustdoc-depinfo")
+        .arg("-Zchecksum-freshness")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo", "checksum-freshness"])
+        .with_stderr_data(str![[r#"
+[DOCUMENTING] foo v0.5.0 ([ROOT]/parent/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-before"));
+
+    p.change_file("../README", "# depinfo-after");
+    // Change mtime into the future
+    p.root().move_into_the_future();
+
+    p.cargo("doc --verbose")
+        .env("CARGO_BUILD_FINGERPRINT", "content")
+        .arg("-Zrustdoc-depinfo")
+        .arg("-Zchecksum-freshness")
+        .masquerade_as_nightly_cargo(&["rustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[DIRTY] foo v0.5.0 ([ROOT]/parent/foo): file size changed (16 != 15) for `src/../../README`
+[DOCUMENTING] foo v0.5.0 ([ROOT]/parent/foo)
+[RUNNING] `rustdoc [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/parent/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    let doc_html = p.read_file("target/doc/foo/index.html");
+    assert!(doc_html.contains("depinfo-after"));
+}
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_gated() {
+    let p = project()
+        .file("Cargo.toml", &basic_lib_manifest("foo"))
+        .file("src/lib.rs", "")
+        .build();
+
+    p.cargo("doc")
+        .arg("-Zrustdoc-mergeable-info")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] the `-Z` flag is only accepted on the nightly channel of Cargo, but this is the `stable` channel
+See https://doc.rust-lang.org/book/appendix-07-nightly-rust.html for more information about Rust release channels.
+
+"#]])
+        .run();
+}
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_with_deps() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies.dep]
+                path = "dep"
+            "#,
+        )
+        .file("src/lib.rs", "extern crate dep; pub fn foo() {}")
+        .file("dep/Cargo.toml", &basic_manifest("dep", "0.0.0"))
+        .file("dep/src/lib.rs", "pub fn bar() {}")
+        .build();
+
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[LOCKING] 1 package to highest compatible version
+[DOCUMENTING] dep v0.0.0 ([ROOT]/foo/dep)
+[CHECKING] dep v0.0.0 ([ROOT]/foo/dep)
+[RUNNING] `rustdoc [..]--crate-name dep [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out [..]`
+[RUNNING] `rustc --crate-name dep [..]`
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out[..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 2 docs for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]].unordered()
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/foo/index.html").is_file());
+    assert!(p.root().join("target/doc/dep/index.html").is_file());
+    assert_eq!(p.glob("target/debug/build/foo/*/out/foo.json").count(), 1);
+    assert_eq!(p.glob("target/debug/build/dep/*/out/dep.json").count(), 1);
+
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/dep/[HASH]/out/dep.json",
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+}
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_with_rustdocflags() {
+    let p = project()
+        .file("Cargo.toml", &basic_lib_manifest("foo"))
+        .file("src/lib.rs", "pub fn foo() {}")
+        .build();
+
+    p.cargo("doc -v")
+        .env(
+            "RUSTDOCFLAGS",
+            "--markdown-playground-url=example.com",
+        )
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(str![[r#"
+[DOCUMENTING] foo v0.5.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]-o [ROOT]/foo/target/doc [..]-Zunstable-options --write-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out [..]--markdown-playground-url=example.com --crate-version 0.5.0`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --markdown-playground-url=example.com --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+}
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_no_deps() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies.dep]
+                path = "dep"
+            "#,
+        )
+        .file("src/lib.rs", "extern crate dep; pub fn foo() {}")
+        .file("dep/Cargo.toml", &basic_manifest("dep", "0.0.0"))
+        .file("dep/src/lib.rs", "pub fn dep() {}")
+        .build();
+
+    p.cargo("doc -v --no-deps")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[LOCKING] 1 package to highest compatible version
+[CHECKING] dep v0.0.0 ([ROOT]/foo/dep)
+[RUNNING] `rustc --crate-name dep --edition=2015 [..]`
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]]
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/foo/index.html").is_file());
+    assert!(!p.root().join("target/doc/dep/index.html").is_file());
+    assert_eq!(p.glob("target/debug/build/foo/*/out/foo.json").count(), 1);
+    assert_eq!(p.glob("target/debug/build/dep/*/out/dep.json").count(), 0);
+
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+}
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_workspace() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [workspace]
+                members = ["foo", "bar"]
+                resolver = "3"
+            "#,
+        )
+        .file(
+            "foo/Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies.dep]
+                path = "../dep"
+            "#,
+        )
+        .file("foo/src/lib.rs", "extern crate dep; pub fn foo() {}")
+        .file("bar/Cargo.toml", &basic_manifest("bar", "0.0.0"))
+        .file("bar/src/lib.rs", "pub fn bar() {}")
+        .file("dep/Cargo.toml", &basic_manifest("dep", "0.0.0"))
+        .file("dep/src/lib.rs", "pub fn dep() {}")
+        .build();
+
+    p.cargo("doc -v --workspace")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[DOCUMENTING] dep v0.0.0 ([ROOT]/foo/dep)
+[CHECKING] dep v0.0.0 ([ROOT]/foo/dep)
+[DOCUMENTING] bar v0.0.0 ([ROOT]/foo/bar)
+[RUNNING] `rustdoc [..]--crate-name dep [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name bar [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/bar/[HASH]/out [..]`
+[RUNNING] `rustc --crate-name dep [..]`
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 3 docs for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/bar/[HASH]/out --read-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/bar/index.html
+[GENERATED] [ROOT]/foo/target/doc/dep/index.html
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]].unordered()
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/foo/index.html").is_file());
+    assert!(p.root().join("target/doc/bar/index.html").is_file());
+    assert!(p.root().join("target/doc/dep/index.html").is_file());
+    assert_eq!(p.glob("target/debug/build/foo/*/out/foo.json").count(), 1);
+    assert_eq!(p.glob("target/debug/build/bar/*/out/bar.json").count(), 1);
+    assert_eq!(p.glob("target/debug/build/dep/*/out/dep.json").count(), 1);
+
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/bar/[HASH]/out/bar.json",
+    "debug/build/dep/[HASH]/out/dep.json",
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+}
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_multi_targets() {
+    if cross_compile_disabled() {
+        return;
+    }
+
+    let target = cross_compile::alternate();
+    let host = rustc_host();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2015"
+            "#,
+        )
+        .file("src/lib.rs", "pub fn foo() {}")
+        .build();
+
+    p.cargo("doc -v --target host-tuple")
+        .args(&["--target", target])
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo src/lib.rs --target [HOST_TARGET] [..]--write-doc-meta-dir=[ROOT]/foo/target/[HOST_TARGET]/debug/build/foo/[HASH]/out [..]`
+[RUNNING] `rustdoc [..]--crate-name foo src/lib.rs --target [ALT_TARGET] [..]--write-doc-meta-dir=[ROOT]/foo/target/[ALT_TARGET]/debug/build/foo/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for [ALT_TARGET]
+[RUNNING] `rustdoc -o [ROOT]/foo/target/[ALT_TARGET]/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/[ALT_TARGET]/debug/build/foo/[HASH]/out`
+[MERGING] 1 doc for [HOST_TARGET]
+[RUNNING] `rustdoc -o [ROOT]/foo/target/[HOST_TARGET]/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/[HOST_TARGET]/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/[HOST_TARGET]/doc/foo/index.html
+[GENERATED] [ROOT]/foo/target/[ALT_TARGET]/doc/foo/index.html
+[GENERATED] [ROOT]/foo/target/[HOST_TARGET]/doc/foo/index.html
+[GENERATED] [ROOT]/foo/target/[ALT_TARGET]/doc/foo/index.html
+
+"#]].unordered(),
+        )
+        .run();
+
+    let path = format!("target/{host}/doc/foo/index.html");
+    assert!(p.root().join(path).is_file());
+    let path = format!("target/{target}/doc/foo/index.html");
+    assert!(p.root().join(path).is_file());
+    let path = format!("target/{host}/debug/build/foo/*/out/foo.json");
+    assert_eq!(p.glob(path).count(), 1);
+    let path = format!("target/{target}/debug/build/foo/*/out/foo.json");
+    assert_eq!(p.glob(path).count(), 1);
+
+    assert_e2e().eq(
+        p.read_file(format!("target/{host}/.rustdoc_fingerprint.json")),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+
+    assert_e2e().eq(
+        p.read_file(format!("target/{target}/.rustdoc_fingerprint.json")),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+}
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_rebuild_detection() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2015"
+            "#,
+        )
+        .file("src/lib.rs", "pub fn foo() {}")
+        .build();
+
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]]
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/foo/index.html").is_file());
+    assert_eq!(p.glob("target/debug/build/foo/*/out/foo.json").count(), 1);
+
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+
+    // Make sure it doesn't recompile.
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(str![[r#"
+[FRESH] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[FRESH] doc-merge for host
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    // Still there
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+
+    // Changing source code trigger re-merge
+    p.change_file("src/lib.rs", "pub fn foo2() {}");
+
+    // Make sure it recompiles
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[DIRTY] foo v0.0.0 ([ROOT]/foo): the precalculated components changed
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]]
+        )
+        .run();
+
+    // Make sure it doesn't recompile.
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(str![[r#"
+[FRESH] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[FRESH] doc-merge for host
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    // Make sure it doesn't recompile after previous no-op build.
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(str![[r#"
+[FRESH] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[FRESH] doc-merge for host
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    // Stay the same
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+}
+
+#[cargo_test(
+    nightly,
+    reason = "rustdoc mergeable crate info is unstable; `rustdoc --emit` is unstable"
+)]
+fn mergeable_info_rebuild_with_depinfo() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2015"
+            "#,
+        )
+        .file("src/lib.rs", "pub fn foo() {}")
+        .build();
+
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info", "-Zrustdoc-depinfo"])
+        .with_stderr_data(
+            str![[r#"
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--emit=html-non-static-files,dep-info=[..] --write-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]]
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/foo/index.html").is_file());
+    assert_eq!(p.glob("target/debug/build/foo/*/out/foo.json").count(), 1);
+
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+
+    // Make sure it doesn't recompile.
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info", "-Zrustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[FRESH] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[FRESH] doc-merge for host
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    // Still there
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+
+    // Changing source code trigger re-merge
+    p.change_file("src/lib.rs", "pub fn foo2() {}");
+
+    // Make sure it recompiles
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info", "-Zrustdoc-depinfo"])
+        .with_stderr_data(
+            str![[r#"
+[DIRTY] foo v0.0.0 ([ROOT]/foo): the file `src/lib.rs` has changed ([TIME_DIFF_AFTER_LAST_BUILD])
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--emit=html-non-static-files,dep-info=[..] --write-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]]
+        )
+        .run();
+
+    // Make sure it doesn't recompile.
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info", "-Zrustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[FRESH] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[FRESH] doc-merge for host
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    // Make sure it doesn't recompile after previous no-op build
+    p.cargo("doc -v")
+        .arg("-Zrustdoc-mergeable-info")
+        .arg("-Zrustdoc-depinfo")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info", "-Zrustdoc-depinfo"])
+        .with_stderr_data(str![[r#"
+[FRESH] foo v0.0.0 ([ROOT]/foo)
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[FRESH] doc-merge for host
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]])
+        .run();
+
+    // Still there
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+}
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_additive() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [workspace]
+                members = ["foo", "bar"]
+                resolver = "3"
+            "#,
+        )
+        .file(
+            "foo/Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2015"
+
+                [dependencies.dep]
+                path = "../dep"
+            "#,
+        )
+        .file("foo/src/lib.rs", "extern crate dep; pub fn foo() {}")
+        .file("bar/Cargo.toml", &basic_manifest("bar", "0.0.0"))
+        .file("bar/src/lib.rs", "pub fn bar() {}")
+        .file("dep/Cargo.toml", &basic_manifest("dep", "0.0.0"))
+        .file("dep/src/lib.rs", "pub fn dep() {}")
+        .build();
+
+    p.cargo("doc -v -p foo --no-deps")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[CHECKING] dep v0.0.0 ([ROOT]/foo/dep)
+[RUNNING] `rustc --crate-name dep [..]`
+[DOCUMENTING] foo v0.0.0 ([ROOT]/foo/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo/index.html
+
+"#]]
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/foo/index.html").is_file());
+    assert!(!p.root().join("target/doc/bar/index.html").is_file());
+    assert!(!p.root().join("target/doc/dep/index.html").is_file());
+    assert_eq!(p.glob("target/debug/build/foo/*/out/foo.json").count(), 1);
+    assert_eq!(p.glob("target/debug/build/bar/*/out/bar.json").count(), 0);
+    assert_eq!(p.glob("target/debug/build/dep/*/out/dep.json").count(), 0);
+
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+
+    p.cargo("doc -v -p dep --no-deps")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[DOCUMENTING] dep v0.0.0 ([ROOT]/foo/dep)
+[RUNNING] `rustdoc [..]--crate-name dep [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 2 docs for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/dep/index.html
+
+"#]]
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/foo/index.html").is_file());
+    assert!(!p.root().join("target/doc/bar/index.html").is_file());
+    assert!(p.root().join("target/doc/dep/index.html").is_file());
+    assert_eq!(p.glob("target/debug/build/foo/*/out/foo.json").count(), 1);
+    assert_eq!(p.glob("target/debug/build/bar/*/out/bar.json").count(), 0);
+    assert_eq!(p.glob("target/debug/build/dep/*/out/dep.json").count(), 1);
+
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/dep/[HASH]/out/dep.json",
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+
+    p.cargo("doc -v -p bar --no-deps")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[DOCUMENTING] bar v0.0.0 ([ROOT]/foo/bar)
+[RUNNING] `rustdoc [..]--crate-name bar [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/bar/[HASH]/out [..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 3 docs for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/bar/[HASH]/out --read-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out --read-doc-meta-dir=[ROOT]/foo/target/debug/build/foo/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/bar/index.html
+
+"#]]
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/foo/index.html").is_file());
+    assert!(p.root().join("target/doc/bar/index.html").is_file());
+    assert!(p.root().join("target/doc/dep/index.html").is_file());
+    assert_eq!(p.glob("target/debug/build/foo/*/out/foo.json").count(), 1);
+    assert_eq!(p.glob("target/debug/build/bar/*/out/bar.json").count(), 1);
+    assert_eq!(p.glob("target/debug/build/dep/*/out/dep.json").count(), 1);
+
+    assert_e2e().eq(
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap(),
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/bar/[HASH]/out/bar.json",
+    "debug/build/dep/[HASH]/out/dep.json",
+    "debug/build/foo/[HASH]/out/foo.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+}
+
+#[cargo_test(nightly, reason = "rustdoc mergeable crate info is unstable")]
+fn mergeable_info_dep_collision() {
+    Package::new("dep", "0.1.0")
+        .file("src/lib.rs", "pub fn dep010() {}")
+        .publish();
+
+    Package::new("dep", "0.2.0")
+        .file("src/lib.rs", "pub fn dep020() {}")
+        .publish();
+
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                edition = "2021"
+
+                [dependencies.dep1]
+                version = "0.1.0"
+                package = "dep"
+
+                [dependencies.dep2]
+                version = "0.2.0"
+                package = "dep"
+            "#,
+        )
+        .file("src/lib.rs", "pub fn foo() {}")
+        .build();
+
+    // First document dep@0.1.0
+    p.cargo("doc -v -p dep@0.1.0")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[UPDATING] `dummy-registry` index
+[LOCKING] 2 packages to highest compatible versions
+[ADDING] dep v0.1.0 (available: v0.2.0)
+[DOWNLOADING] crates ...
+[DOWNLOADED] dep v0.1.0 (registry `dummy-registry`)
+[DOWNLOADED] dep v0.2.0 (registry `dummy-registry`)
+[DOCUMENTING] dep v0.1.0
+[RUNNING] `rustdoc [..]--crate-name dep [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out [..]--crate-version 0.1.0`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/dep/index.html
+
+"#]].unordered()
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/dep/index.html").is_file());
+    assert_eq!(p.glob("target/debug/build/dep/*/out/dep.json").count(), 1);
+
+    // See `fn dep010()`
+    assert!(p.build_dir().join("doc/dep/fn.dep010.html").exists());
+    assert!(!p.build_dir().join("doc/dep/fn.dep020.html").exists());
+
+    let first_fingerprint =
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap();
+    assert_e2e().eq(
+        &first_fingerprint,
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/dep/[HASH]/out/dep.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+
+    // Now selectively document dep@0.2.0
+    p.cargo("doc -v -p dep@0.2.0")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-mergeable-info"])
+        .with_stderr_data(
+            str![[r#"
+[DOCUMENTING] dep v0.2.0
+[RUNNING] `rustdoc [..]--crate-name dep [..]--write-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out [..]--crate-version 0.2.0`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[MERGING] 1 doc for host
+[RUNNING] `rustdoc -o [ROOT]/foo/target/doc -Zunstable-options --read-doc-meta-dir=[ROOT]/foo/target/debug/build/dep/[HASH]/out`
+[FINISHED] documentation merge in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/dep/index.html
+
+"#]]
+        )
+        .run();
+
+    assert!(p.root().join("target/doc/dep/index.html").is_file());
+    // We'll have two dep.json
+    assert_eq!(p.glob("target/debug/build/dep/*/out/dep.json").count(), 2);
+
+    // ...but only the selected dep@0.2.0 would be merged
+    assert!(!p.build_dir().join("doc/dep/fn.dep010.html").exists());
+    assert!(p.build_dir().join("doc/dep/fn.dep020.html").exists());
+
+    let second_fingerprint =
+        fs::read_to_string(p.build_dir().join(".rustdoc_fingerprint.json")).unwrap();
+    assert_e2e().eq(
+        &second_fingerprint,
+        str![[r#"
+{
+  "doc_parts": [
+    "debug/build/dep/[HASH]/out/dep.json"
+  ],
+  "rustc_vv": "{...}"
+}
+"#]]
+        .is_json(),
+    );
+    // ...and the fingerprint content are different (path to dep.json different)
+    assert_ne!(first_fingerprint, second_fingerprint);
+}
+
+#[cargo_test]
+fn doc_output_format_html_stable() {
+    let p = project().file("src/lib.rs", "").build();
+
+    p.cargo("doc --output-format html -v")
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] the `--output-format` flag is unstable, and only available on the nightly channel of Cargo, but this is the `stable` channel
+See https://doc.rust-lang.org/book/[..].html for more information about Rust release channels.
+See https://github.com/rust-lang/cargo/issues/13283 for more information about the `--output-format` flag.
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn doc_invalid_output_format() {
+    let p = project().file("src/lib.rs", "").build();
+
+    p.cargo("doc --output-format pdf -v")
+        .arg("-Zunstable-options")
+        .masquerade_as_nightly_cargo(&["rustdoc-output-format"])
+        .with_status(1)
+        .with_stderr_data(str![[r#"
+[ERROR] invalid value 'pdf' for '--output-format <FMT>'
+  [possible values: html, json]
+
+For more information, try '--help'.
+
+"#]])
+        .run();
+}
+
+#[cargo_test]
+fn doc_output_format_json_without_unstable_options() {
+    let p = project().file("src/lib.rs", "").build();
+
+    p.cargo("doc --output-format json -v")
+        .masquerade_as_nightly_cargo(&["rustdoc-output-format"])
+        .with_status(101)
+        .with_stderr_data(str![[r#"
+[ERROR] the `--output-format` flag is unstable, pass `-Z unstable-options` to enable it
+See https://github.com/rust-lang/cargo/issues/13283 for more information about the `--output-format` flag.
+
+"#]])
+        .run();
+}
+
+#[cargo_test(nightly, reason = "--output-format is unstable")]
+fn doc_output_format_json_no_deps() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2021"
+
+                [dependencies]
+                bar = { path = "bar" }
+            "#,
+        )
+        .file("src/lib.rs", "pub fn foo_fn() {}")
+        .file(
+            "bar/Cargo.toml",
+            r#"
+                [package]
+                name = "bar"
+                version = "0.1.0"
+                edition = "2021"
+            "#,
+        )
+        .file("bar/src/lib.rs", "pub fn bar_fn() {}")
+        .build();
+
+    p.cargo("doc --no-deps --output-format json -v")
+        .arg("-Zunstable-options")
+        .masquerade_as_nightly_cargo(&["rustdoc-output-format"])
+        .with_stderr_data(str![[r#"
+[LOCKING] 1 package to highest compatible version
+[CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
+[RUNNING] `rustc [..]--crate-name bar [..]`
+[DOCUMENTING] foo v0.1.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--output-format=json[..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo.json
+
+"#]])
+        .run();
+
+    assert!(p.root().join("target/doc/foo.json").is_file());
+    assert!(!p.root().join("target/doc/bar.json").exists());
+    assert!(!p.root().join("target/doc/foo/index.html").exists());
+
+    let foo_json = fs::read_to_string(p.root().join("target/doc/foo.json")).unwrap();
+    assert!(foo_json.contains("foo_fn"));
+}
+
+#[cargo_test(nightly, reason = "--output-format is unstable")]
+fn doc_output_format_json_with_deps() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2021"
+
+                [dependencies]
+                bar = { path = "bar" }
+            "#,
+        )
+        .file("src/lib.rs", "pub fn foo_fn() {}")
+        .file(
+            "bar/Cargo.toml",
+            r#"
+                [package]
+                name = "bar"
+                version = "0.1.0"
+                edition = "2021"
+            "#,
+        )
+        .file("bar/src/lib.rs", "pub fn bar_fn() {}")
+        .build();
+
+    p.cargo("doc --output-format json -v")
+        .arg("-Zunstable-options")
+        .masquerade_as_nightly_cargo(&["rustdoc-output-format"])
+        .with_stderr_data(
+            str![[r#"
+[LOCKING] 1 package to highest compatible version
+[CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
+[RUNNING] `rustc [..]--crate-name bar [..]`
+[DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
+[RUNNING] `rustdoc [..]--crate-name bar [..]--output-format=json[..]`
+[DOCUMENTING] foo v0.1.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--output-format=json[..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo.json
+
+"#]]
+            .unordered(),
+        )
+        .run();
+
+    let foo_json_path = p.root().join("target/doc/foo.json");
+    let bar_json_path = p.root().join("target/doc/bar.json");
+    assert!(foo_json_path.is_file());
+    assert!(bar_json_path.is_file());
+
+    let foo_json = fs::read_to_string(&foo_json_path).unwrap();
+    assert!(foo_json.contains("foo_fn"));
+
+    let bar_json = fs::read_to_string(&bar_json_path).unwrap();
+    assert!(bar_json.contains("bar_fn"));
+
+    assert!(!p.root().join("target/doc/foo/index.html").exists());
+    assert!(!p.root().join("target/doc/bar/index.html").exists());
+}
+
+#[cargo_test(
+    nightly,
+    reason = "--output-format and -Zrustdoc-mergeable-info are unstable"
+)]
+fn doc_output_format_json_with_deps_and_mergeable_info() {
+    let p = project()
+        .file(
+            "Cargo.toml",
+            r#"
+                [package]
+                name = "foo"
+                version = "0.1.0"
+                edition = "2021"
+
+                [dependencies]
+                bar = { path = "bar" }
+            "#,
+        )
+        .file("src/lib.rs", "pub fn foo_fn() {}")
+        .file(
+            "bar/Cargo.toml",
+            r#"
+                [package]
+                name = "bar"
+                version = "0.1.0"
+                edition = "2021"
+            "#,
+        )
+        .file("bar/src/lib.rs", "pub fn bar_fn() {}")
+        .build();
+
+    p.cargo("doc --output-format json -v")
+        .arg("-Zunstable-options")
+        .arg("-Zrustdoc-mergeable-info")
+        .masquerade_as_nightly_cargo(&["rustdoc-output-format"])
+        .with_stderr_data(
+            str![[r#"
+[LOCKING] 1 package to highest compatible version
+[CHECKING] bar v0.1.0 ([ROOT]/foo/bar)
+[RUNNING] `rustc [..]--crate-name bar [..]`
+[DOCUMENTING] bar v0.1.0 ([ROOT]/foo/bar)
+[RUNNING] `rustdoc [..]--crate-name bar [..]--output-format=json[..]`
+[DOCUMENTING] foo v0.1.0 ([ROOT]/foo)
+[RUNNING] `rustdoc [..]--crate-name foo [..]--output-format=json[..]`
+[FINISHED] `dev` profile [unoptimized + debuginfo] target(s) in [ELAPSED]s
+[GENERATED] [ROOT]/foo/target/doc/foo.json
+
+"#]]
+            .unordered(),
+        )
+        .run();
+
+    let foo_json_path = p.root().join("target/doc/foo.json");
+    let bar_json_path = p.root().join("target/doc/bar.json");
+    assert!(foo_json_path.is_file());
+    assert!(bar_json_path.is_file());
+
+    let foo_json = fs::read_to_string(&foo_json_path).unwrap();
+    assert!(foo_json.contains("foo_fn"));
+
+    let bar_json = fs::read_to_string(&bar_json_path).unwrap();
+    assert!(bar_json.contains("bar_fn"));
+
+    assert!(!p.root().join("target/doc/foo/index.html").exists());
+    assert!(!p.root().join("target/doc/bar/index.html").exists());
 }

@@ -26,16 +26,16 @@ pub fn cli() -> Command {
             "Build only the specified example",
             "Build all examples",
             "Build only the specified test target",
-            "Build all test targets",
+            "Build all targets that have `test = true` set",
             "Build only the specified bench target",
-            "Build all bench targets",
+            "Build all targets that have `bench = true` set",
             "Build all targets",
         )
         .arg_features()
         .arg_parallel()
         .arg_release("Build artifacts in release mode, with optimizations")
         .arg_profile("Build artifacts with the specified profile")
-        .arg_target_triple("Build for the target triple")
+        .arg_target_triple("Build for the target tuple")
         .arg_target_dir()
         .arg(
             opt("output-format", "The output type to write (unstable)")
@@ -47,7 +47,7 @@ pub fn cli() -> Command {
         .arg_manifest_path()
         .arg_ignore_rust_version()
         .after_help(color_print::cstr!(
-            "Run `<cyan,bold>cargo help rustdoc</>` for more detailed information.\n"
+            "Run `<bright-cyan,bold>cargo help rustdoc</>` for more detailed information.\n"
         ))
 }
 
@@ -63,7 +63,7 @@ pub fn exec(gctx: &mut GlobalContext, args: &ArgMatches) -> CliResult {
 
     let mut compile_opts = args.compile_options_for_single_package(
         gctx,
-        CompileMode::Doc {
+        UserIntent::Doc {
             deps: false,
             json: matches!(output_format, OutputFormat::Json),
         },
